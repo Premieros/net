@@ -78,17 +78,8 @@ internal static class Storage
     public static void Initialize()
     {
         Directory.CreateDirectory(Folder);
-        if (File.Exists(FilePath))
-        {
-            try
-            {
-                Data = JsonSerializer.Deserialize<AppData>(File.ReadAllText(FilePath), JsonOptions) ?? new AppData();
-            }
-            catch
-            {
-                Data = new AppData();
-            }
-        }
+        Reload();
+
         if (Data.Groups.Count == 0)
         {
             Data.Groups.AddRange(new[]
@@ -99,6 +90,19 @@ internal static class Storage
                 new AccessGroup { Name = "VIP", Minutes = 180, QuotaMb = 5120, DownloadMbps = 15, UploadMbps = 8, MaxDevices = 2 }
             });
             Save();
+        }
+    }
+
+    public static void Reload()
+    {
+        if (!File.Exists(FilePath)) return;
+        try
+        {
+            Data = JsonSerializer.Deserialize<AppData>(File.ReadAllText(FilePath), JsonOptions) ?? new AppData();
+        }
+        catch
+        {
+            // Keep the current in-memory snapshot if the gateway is writing the file at the same moment.
         }
     }
 
@@ -290,6 +294,8 @@ internal sealed class MainForm : Form
                 ? "Gateway Service: متصل — Portal جاهز"
                 : "Gateway Service: متصل";
             _gatewayStatus.ForeColor = Color.SeaGreen;
+            Storage.Reload();
+            RefreshAll();
         }
         catch
         {
