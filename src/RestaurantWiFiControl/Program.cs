@@ -41,6 +41,9 @@ internal sealed class AccessGroup
     public decimal DownloadMbps { get; set; } = 5;
     public decimal UploadMbps { get; set; } = 2;
     public int MaxDevices { get; set; } = 1;
+    public int MaxUsesPerDevice { get; set; } = 1;
+    public bool BlockVideo { get; set; } = false;
+    public string Kind { get; set; } = "customer";
     public bool Enabled { get; set; } = true;
 }
 
@@ -84,10 +87,9 @@ internal static class Storage
         {
             Data.Groups.AddRange(new[]
             {
-                new AccessGroup { Name = "العملاء", Minutes = 60, QuotaMb = 1024, DownloadMbps = 5, UploadMbps = 2, MaxDevices = 1 },
-                new AccessGroup { Name = "الموظفين", Minutes = 720, QuotaMb = 0, DownloadMbps = 10, UploadMbps = 5, MaxDevices = 1 },
-                new AccessGroup { Name = "الإدارة", Minutes = 1440, QuotaMb = 0, DownloadMbps = 0, UploadMbps = 0, MaxDevices = 3 },
-                new AccessGroup { Name = "VIP", Minutes = 180, QuotaMb = 5120, DownloadMbps = 15, UploadMbps = 8, MaxDevices = 2 }
+                new AccessGroup { Name = "العملاء", Kind = "customer", Minutes = 60, QuotaMb = 1024, DownloadMbps = 5, UploadMbps = 2, MaxDevices = 1, MaxUsesPerDevice = 2, BlockVideo = true },
+                new AccessGroup { Name = "الموظفين", Kind = "employee", Minutes = 720, QuotaMb = 4096, DownloadMbps = 10, UploadMbps = 5, MaxDevices = 1, MaxUsesPerDevice = 20, BlockVideo = false },
+                new AccessGroup { Name = "المديرين", Kind = "manager", Minutes = 1440, QuotaMb = 0, DownloadMbps = 0, UploadMbps = 0, MaxDevices = 2, MaxUsesPerDevice = 100, BlockVideo = false }
             });
             Save();
         }
@@ -477,7 +479,6 @@ internal sealed class MainForm : Form
         var row = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 90, FlowDirection = FlowDirection.RightToLeft, AutoScroll = true };
         _codeGroup = new ComboBox { Width = 210, DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(7, 28, 7, 0) };
         var count = Field(row, "عدد الأكواد", "1", 90);
-        var prefix = Field(row, "بادئة", "", 100);
         var length = Field(row, "طول الكود", "6", 90);
         var maxUses = Field(row, "أقصى استخدام", "1", 100);
         var create = PrimaryButton("إنشاء الأكواد", 125);
@@ -493,11 +494,10 @@ internal sealed class MainForm : Form
                 return;
             }
             var created = new List<string>();
-            var cleanPrefix = new string(prefix.Text.Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_').ToArray()).ToUpperInvariant();
             for (var i = 0; i < n; i++)
             {
                 string code;
-                do code = cleanPrefix + GenerateCode(len); while (Storage.Data.Codes.Any(x => x.Code == code));
+                do code = GenerateCode(len); while (Storage.Data.Codes.Any(x => x.Code == code));
                 Storage.Data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, MaxUses = max });
                 created.Add(code);
             }
@@ -626,7 +626,7 @@ internal sealed class MainForm : Form
 
     void RefreshAll()
     {
-        var groups = Storage.Data.Groups.Where(g => g.Enabled).ToList();
+        var groups = Storage.Data.Groups.Where(g => g.Enabled && g.Kind != "customer").ToList();
         if (_quickGroup is not null)
         {
             _quickGroup.DataSource = groups.ToList();
@@ -648,6 +648,9 @@ internal sealed class MainForm : Form
                 تحميل = g.DownloadMbps == 0 ? "غير محدود" : $"{g.DownloadMbps} Mbps",
                 رفع = g.UploadMbps == 0 ? "غير محدود" : $"{g.UploadMbps} Mbps",
                 الأجهزة = g.MaxDevices,
+                مرات_الجهاز = g.MaxUsesPerDevice,
+                الفيديو = g.BlockVideo ? "محجوب" : "مسموح",
+                النوع = g.Kind == "customer" ? "عملاء" : g.Kind == "employee" ? "موظفون" : "مديرون",
                 الحالة = g.Enabled ? "مفعل" : "موقوف"
             }).ToList();
         }
@@ -688,11 +691,11 @@ internal sealed class MainForm : Form
 
     static string GenerateCode(int length)
     {
-        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        const string digits = "0123456789";
         Span<byte> bytes = stackalloc byte[length];
         RandomNumberGenerator.Fill(bytes);
         var sb = new StringBuilder(length);
-        foreach (var b in bytes) sb.Append(chars[b % chars.Length]);
+        foreach (var b in bytes) sb.Append(digits[b % digits.Length]);
         return sb.ToString();
     }
 
