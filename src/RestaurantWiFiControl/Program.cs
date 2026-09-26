@@ -149,7 +149,7 @@ internal sealed class PasswordDialog : Form
 
         var title = new Label
         {
-            Text = "Restaurant Wi-Fi Control\nV9 Native Windows",
+            Text = "Restaurant Wi-Fi Control\nV9.1 Native Windows",
             ForeColor = Color.White,
             Font = new Font("Segoe UI", 18, FontStyle.Bold),
             Dock = DockStyle.Top,
@@ -247,10 +247,12 @@ internal sealed class MainForm : Form
     Label? _metricCodes;
     Label? _metricOnline;
     Label? _metricClients;
+    Label? _gatewayStatus;
+    readonly System.Net.Http.HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     public MainForm()
     {
-        Text = "Restaurant Wi-Fi Control — V9 Native Windows";
+        Text = "Restaurant Wi-Fi Control — V9.1 Native Windows";
         Width = 1450;
         Height = 850;
         MinimumSize = new Size(1150, 680);
@@ -272,6 +274,28 @@ internal sealed class MainForm : Form
         BuildSettings();
         ShowPage("dashboard", "الرئيسية");
         RefreshAll();
+        var timer = new System.Windows.Forms.Timer { Interval = 3000 };
+        timer.Tick += async (_, _) => await CheckGatewayAsync();
+        timer.Start();
+        Shown += async (_, _) => await CheckGatewayAsync();
+    }
+
+    async Task CheckGatewayAsync()
+    {
+        if (_gatewayStatus is null) return;
+        try
+        {
+            var status = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
+            _gatewayStatus.Text = status.Contains("portal-ready", StringComparison.OrdinalIgnoreCase)
+                ? "Gateway Service: متصل — Portal جاهز"
+                : "Gateway Service: متصل";
+            _gatewayStatus.ForeColor = Color.SeaGreen;
+        }
+        catch
+        {
+            _gatewayStatus.Text = "Gateway Service: غير متصل";
+            _gatewayStatus.ForeColor = Color.DarkOrange;
+        }
     }
 
     Panel BuildSidebar()
@@ -279,7 +303,7 @@ internal sealed class MainForm : Form
         var sidebar = new Panel { Dock = DockStyle.Right, Width = 235, BackColor = Color.FromArgb(17, 24, 39) };
         var brand = new Label
         {
-            Text = "Wi-Fi Control\nV9 Native Windows",
+            Text = "Wi-Fi Control\nV9.1 Native Windows",
             Dock = DockStyle.Top,
             Height = 95,
             ForeColor = Color.White,
@@ -319,16 +343,16 @@ internal sealed class MainForm : Form
     Panel BuildTopbar()
     {
         var top = new Panel { Dock = DockStyle.Top, Height = 68, BackColor = Color.White };
-        var status = new Label
+        _gatewayStatus = new Label
         {
-            Text = "Gateway Service: غير مرتبط بعد",
+            Text = "Gateway Service: جاري الفحص...",
             Dock = DockStyle.Left,
-            Width = 250,
+            Width = 320,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.DarkOrange,
             Padding = new Padding(15, 0, 0, 0)
         };
-        top.Controls.Add(status);
+        top.Controls.Add(_gatewayStatus);
         top.Controls.Add(_pageTitle);
         return top;
     }
@@ -387,7 +411,7 @@ internal sealed class MainForm : Form
     {
         var card = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Margin = new Padding(7), Padding = new Padding(15) };
         var titleLabel = new Label { Text = title, Dock = DockStyle.Top, Height = 30, ForeColor = Color.DimGray, TextAlign = ContentAlignment.MiddleRight };
-        var value = new Label { Text = "0", Dock = DockStyle.Fill, Font = new Font("Segoe UI", 26, FontStyle.Bold), TextAlign = ContentAlignment.MiddleRight };
+        var value = new Label { Text = "0", Dock = DockStyle.Fill, Font = new Font("Segoe UI", 26, FontStyle.Bold), TextAlign = ContentAlignment.MiddleCenter, RightToLeft = RightToLeft.No };
         card.Controls.Add(value);
         card.Controls.Add(titleLabel);
         parent.Controls.Add(card, column, 0);
@@ -492,7 +516,7 @@ internal sealed class MainForm : Form
         var info = Card(page, DockStyle.Bottom, 55);
         info.Controls.Add(new Label
         {
-            Text = "سيتم تفعيل الفصل والحظر والبوابة تلقائيًا بعد ربط Windows Gateway Service.",
+            Text = "Gateway Service والبوابة مدمجان في V9.1. الحجب والتحويل التلقائي قيد اختبار طبقة الشبكة على جهاز الـHotspot.",
             Dock = DockStyle.Fill,
             ForeColor = Color.DarkOrange,
             TextAlign = ContentAlignment.MiddleRight
