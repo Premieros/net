@@ -155,7 +155,7 @@ internal sealed class PasswordDialog : Form
 
         var title = new Label
         {
-            Text = "Restaurant Wi-Fi Control\nV9.1 Native Windows",
+            Text = "Restaurant Wi-Fi Control\nV10 Network Gate",
             ForeColor = Color.White,
             Font = new Font("Segoe UI", 18, FontStyle.Bold),
             Dock = DockStyle.Top,
@@ -254,11 +254,14 @@ internal sealed class MainForm : Form
     Label? _metricOnline;
     Label? _metricClients;
     Label? _gatewayStatus;
+    Label? _wanLine;
+    Label? _apLines;
+    Label? _gatePolicy;
     readonly System.Net.Http.HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
     public MainForm()
     {
-        Text = "Restaurant Wi-Fi Control — V9.1 Native Windows";
+        Text = "Restaurant Wi-Fi Control — V10 Network Gate";
         Width = 1450;
         Height = 850;
         MinimumSize = new Size(1150, 680);
@@ -291,11 +294,58 @@ internal sealed class MainForm : Form
         if (_gatewayStatus is null) return;
         try
         {
-            var status = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
-            _gatewayStatus.Text = status.Contains("portal-ready", StringComparison.OrdinalIgnoreCase)
-                ? "Gateway Service: متصل — Portal جاهز"
-                : "Gateway Service: متصل";
-            _gatewayStatus.ForeColor = Color.SeaGreen;
+            var json = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var gate = root.GetProperty("gate");
+            var active = gate.GetProperty("active").GetBoolean();
+            var state = gate.GetProperty("state").GetString() ?? "";
+
+            _gatewayStatus.Text = active
+                ? "Gateway: متصل — الحجب مفعل قبل الكود"
+                : $"Gateway: متصل — {state}";
+            _gatewayStatus.ForeColor = active ? Color.SeaGreen : Color.DarkOrange;
+
+            if (_gatePolicy is not null)
+            {
+                _gatePolicy.Text = active
+                    ? "سياسة الإنترنت: مغلق افتراضياً — يفتح فقط للجهاز بعد قبول الكود"
+                    : $"سياسة الإنترنت: غير جاهزة ({state})";
+                _gatePolicy.ForeColor = active ? Color.SeaGreen : Color.DarkOrange;
+            }
+
+            if (_wanLine is not null)
+            {
+                if (root.TryGetProperty("wan", out var wan) && wan.ValueKind == JsonValueKind.Object)
+                {
+                    var name = wan.GetProperty("name").GetString() ?? "";
+                    var ip = wan.GetProperty("ipv4").GetString() ?? "";
+                    var gw = wan.GetProperty("gateway").GetString() ?? "";
+                    var idx = wan.GetProperty("interfaceIndex").GetInt32();
+                    _wanLine.Text = $"الخط الداخل (WAN): {name} — IP {ip} — Gateway {gw} — IF#{idx}";
+                }
+                else _wanLine.Text = "الخط الداخل (WAN): لم يتم اكتشافه";
+            }
+
+            if (_apLines is not null)
+            {
+                var lines = new List<string>();
+                if (root.TryGetProperty("accessPoints", out var aps) && aps.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var ap in aps.EnumerateArray())
+                    {
+                        var name = ap.GetProperty("name").GetString() ?? "";
+                        var ip = ap.GetProperty("ipv4").GetString() ?? "";
+                        var subnet = ap.GetProperty("subnet").GetString() ?? "";
+                        var idx = ap.GetProperty("interfaceIndex").GetInt32();
+                        lines.Add($"{name} — {ip} — {subnet} — IF#{idx}");
+                    }
+                }
+                _apLines.Text = lines.Count == 0
+                    ? "الخطوط الخارجة إلى Access Point: لم يتم اكتشاف خط خروج"
+                    : "الخطوط الخارجة إلى Access Point:\n" + string.Join("\n", lines);
+            }
+
             Storage.Reload();
             RefreshAll();
         }
@@ -303,6 +353,11 @@ internal sealed class MainForm : Form
         {
             _gatewayStatus.Text = "Gateway Service: غير متصل";
             _gatewayStatus.ForeColor = Color.DarkOrange;
+            if (_gatePolicy is not null)
+            {
+                _gatePolicy.Text = "سياسة الإنترنت: Gateway غير متصل";
+                _gatePolicy.ForeColor = Color.DarkOrange;
+            }
         }
     }
 
@@ -311,7 +366,7 @@ internal sealed class MainForm : Form
         var sidebar = new Panel { Dock = DockStyle.Right, Width = 235, BackColor = Color.FromArgb(17, 24, 39) };
         var brand = new Label
         {
-            Text = "Wi-Fi Control\nV9.1 Native Windows",
+            Text = "Wi-Fi Control\nV10 Network Gate",
             Dock = DockStyle.Top,
             Height = 95,
             ForeColor = Color.White,
@@ -357,7 +412,7 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Left,
             Width = 320,
             TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Color.DarkOrange,
+            ForeColor = Color.SeaGreen,
             Padding = new Padding(15, 0, 0, 0)
         };
         top.Controls.Add(_gatewayStatus);
@@ -390,6 +445,41 @@ internal sealed class MainForm : Form
         _metricOnline = Metric(metrics, 2, "المتصلون الآن");
         _metricClients = Metric(metrics, 3, "المستخدمون");
         page.Controls.Add(metrics);
+
+        var network = Card(page, DockStyle.Top, 185);
+        network.Controls.Add(new Label
+        {
+            Text = "حالة خطوط الشبكة والحجب",
+            Dock = DockStyle.Top,
+            Height = 34,
+            Font = new Font("Segoe UI", 13, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleRight
+        });
+        _wanLine = new Label
+        {
+            Text = "الخط الداخل (WAN): جاري الاكتشاف...",
+            Dock = DockStyle.Top,
+            Height = 32,
+            TextAlign = ContentAlignment.MiddleRight
+        };
+        _apLines = new Label
+        {
+            Text = "الخطوط الخارجة إلى Access Point: جاري الاكتشاف...",
+            Dock = DockStyle.Top,
+            Height = 65,
+            TextAlign = ContentAlignment.TopRight
+        };
+        _gatePolicy = new Label
+        {
+            Text = "سياسة الإنترنت: جاري التحقق...",
+            Dock = DockStyle.Top,
+            Height = 30,
+            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleRight
+        };
+        network.Controls.Add(_gatePolicy);
+        network.Controls.Add(_apLines);
+        network.Controls.Add(_wanLine);
 
         var quick = Card(page, DockStyle.Top, 150);
         quick.Controls.Add(new Label { Text = "إنشاء كود سريع", Dock = DockStyle.Top, Height = 35, Font = new Font("Segoe UI", 13, FontStyle.Bold) });
@@ -522,7 +612,7 @@ internal sealed class MainForm : Form
         var info = Card(page, DockStyle.Bottom, 55);
         info.Controls.Add(new Label
         {
-            Text = "Gateway Service والبوابة مدمجان في V9.1. الحجب والتحويل التلقائي قيد اختبار طبقة الشبكة على جهاز الـHotspot.",
+            Text = "V10: الإنترنت محجوب افتراضياً على خطوط الـAccess Point عبر WFP، ولا يُسمح للجهاز بالمرور إلى WAN إلا بعد قبول الكود وحتى انتهاء الجلسة.",
             Dock = DockStyle.Fill,
             ForeColor = Color.DarkOrange,
             TextAlign = ContentAlignment.MiddleRight

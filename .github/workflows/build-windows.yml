@@ -2,7 +2,7 @@ name: Build Windows Installer
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "rebuild-network-gate-v10" ]
   workflow_dispatch:
 
 permissions:
@@ -58,6 +58,6 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Restaurant-WiFi-Control-V9.1-Setup
-          path: installer/output/Restaurant_WiFi_Control_V9_1_Setup.exe
+          name: Restaurant-WiFi-Control-V10-Setup
+          path: installer/output/Restaurant_WiFi_Control_V10_Setup.exe
           if-no-files-found: error
