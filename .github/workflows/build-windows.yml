@@ -2,7 +2,7 @@ name: Build Windows Installer
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "rebuild-network-gate-v10" ]
   workflow_dispatch:
 
 permissions:
