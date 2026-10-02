@@ -12,3 +12,5 @@ Native Windows captive-portal and network-gate application for restaurant networ
 - The management dashboard shows the detected WAN line, AP lines, and gate state.
 
 Data remains local in `%ProgramData%\Restaurant WiFi Control\v9-data.json`.
+
+Build target: Windows x64 self-contained installer.
