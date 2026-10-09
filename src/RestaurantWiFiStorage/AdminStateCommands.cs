@@ -48,6 +48,7 @@ public static class AdminStateCommands
                     until <= DateTimeOffset.UtcNow.AddSeconds(15))
                     throw new ArgumentException("Trial is not active.");
                 network["ExperimentalWfpTrialBlockingObserved"] = true;
+                network["ExperimentalWfpTrialBlockingObservedAtUtc"] = DateTimeOffset.UtcNow.ToString("O");
                 return new AdminResponse(true);
             });
 
@@ -58,6 +59,7 @@ public static class AdminStateCommands
                 {
                     network["ExperimentalWfpTrialUntilUtc"] = "";
                     network["ExperimentalWfpTrialBlockingObserved"] = false;
+                    network["ExperimentalWfpTrialBlockingObservedAtUtc"] = "";
                 }
                 return new AdminResponse(true);
             });
@@ -154,6 +156,7 @@ public static class AdminStateCommands
                     }
                     var clean = (JsonObject)network.DeepClone();
                     clean["ExperimentalWfpTrialBlockingObserved"] = false;
+                    clean["ExperimentalWfpTrialBlockingObservedAtUtc"] = "";
                     root["Network"] = clean;
                     return new AdminResponse(true);
                 }
