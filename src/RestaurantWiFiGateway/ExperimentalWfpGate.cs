@@ -210,17 +210,33 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
 
             foreach (var ap in aps)
             {
-                newIds.Add(AddFilter(
-                    $"Restaurant WiFi default deny {ap.InterfaceIndex}->{wan.InterfaceIndex}",
-                    FwpActionBlock,
-                    weightClass: 1,
-                    new[]
-                    {
-                        Condition(ConditionSourceInterfaceIndex, FwpMatchType.Equal, unchecked((uint)ap.InterfaceIndex)),
-                        Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)wan.InterfaceIndex))
-                    }));
+                var allowedOnThisInterface = authorized.Where(ap.Contains).ToArray();
+                // IMPORTANT: BLOCK overrides a matching PERMIT in WFP. Merely
+                // assigning a higher weight to the per-IP permit is NOT enough.
+                // After granting an address, replace the blanket BLOCK with a
+                // set of source CIDRs covering ALL OTHER IPv4 addresses.
+                // As a result no BLOCK condition matches an authorized client.
+                var denyPrefixes = Ipv4TrialRulePlanner.DenyAllExcept(allowedOnThisInterface);
+                if (allowedOnThisInterface.Length == 0)
+                {
+                    // Small, initial deny policy when there are no exceptions.
+                    newIds.Add(AddFilter(
+                        $"Restaurant WiFi default deny {ap.InterfaceIndex}->{wan.InterfaceIndex}",
+                        FwpActionBlock,
+                        weightClass: 1,
+                        new[]
+                        {
+                            Condition(ConditionSourceInterfaceIndex, FwpMatchType.Equal, unchecked((uint)ap.InterfaceIndex)),
+                            Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)wan.InterfaceIndex))
+                        }));
+                }
+                else
+                {
+                    foreach (var prefix in denyPrefixes)
+                        newIds.Add(AddPrefixDenyFilter(ap.InterfaceIndex, wan.InterfaceIndex, prefix));
+                }
 
-                foreach (var ip in authorized.Where(ap.Contains))
+                foreach (var ip in allowedOnThisInterface)
                 {
                     newIds.Add(AddFilter(
                         $"Restaurant WiFi permit {ip} {ap.InterfaceIndex}->{wan.InterfaceIndex}",
@@ -312,6 +328,43 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
             Marshal.FreeHGlobal(sessionName);
             Marshal.FreeHGlobal(sessionDescription);
         }
+    }
+
+    // WFP condition values holding a v4 address/mask use a pointer to the
+    // unmanaged FWP_V4_ADDR_AND_MASK structure. fwpmclnt copies that value
+    // synchronously during FwpmFilterAdd0. Keep it alive until that call ends.
+    ulong AddPrefixDenyFilter(int inbound, int outbound,
+        Ipv4TrialRulePlanner.Ipv4Prefix prefix)
+    {
+        var maskValue = Marshal.AllocHGlobal(Marshal.SizeOf<FwpV4AddrAndMask>());
+        try
+        {
+            Marshal.StructureToPtr(new FwpV4AddrAndMask
+            {
+                address = prefix.Network,
+                mask = prefix.Mask
+            }, maskValue, false);
+            return AddFilter(
+                $"Restaurant WiFi deny {prefix} {inbound}->{outbound}",
+                FwpActionBlock,
+                weightClass: 1,
+                new[]
+                {
+                    Condition(ConditionSourceInterfaceIndex, FwpMatchType.Equal, unchecked((uint)inbound)),
+                    Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)outbound)),
+                    new FwpmFilterCondition0
+                    {
+                        fieldKey = ConditionIpSourceAddress,
+                        matchType = FwpMatchType.Equal,
+                        conditionValue = new FwpConditionValue0
+                        {
+                            type = FwpDataType.V4AddrMask,
+                            value = new FwpValueUnion { pointer = maskValue }
+                        }
+                    }
+                });
+        }
+        finally { Marshal.FreeHGlobal(maskValue); }
     }
 
     ulong AddFilter(string name, uint actionType, byte weightClass, FwpmFilterCondition0[] conditions)
@@ -417,7 +470,9 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
         Uint8 = 1,
         Uint16 = 2,
         Uint32 = 3,
-        Uint64 = 4
+        Uint64 = 4,
+        // FWP_V4_ADDR_MASK is a pointer type, not a UINT32 filter value.
+        V4AddrMask = 0x100
     }
 
     enum FwpMatchType : int
@@ -447,6 +502,13 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
         [FieldOffset(0)] public uint uint32;
         [FieldOffset(0)] public IntPtr uint64;
         [FieldOffset(0)] public IntPtr pointer;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct FwpV4AddrAndMask
+    {
+        public uint address;
+        public uint mask;
     }
 
     [StructLayout(LayoutKind.Sequential)]
