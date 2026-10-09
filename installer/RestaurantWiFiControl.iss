@@ -33,9 +33,10 @@ Name: "{autodesktop}\Restaurant WiFi Control"; Filename: "{app}\{#MyAppExeName}"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Run]
-Filename: "{cmd}"; Parameters: "/C sc.exe stop RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc.exe delete RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc.exe create RestaurantWiFiGateway binPath= ""{app}\Gateway\RestaurantWiFiGateway.exe"" start= auto DisplayName= ""Restaurant WiFi Gateway"""; Flags: runhidden waituntilterminated
+; The gateway is stopped in CurStepChanged(ssInstall), BEFORE [Files] replaces its executable.
+; Keep the existing service during upgrades rather than deleting it while running.
+Filename: "{cmd}"; Parameters: "/C sc.exe query RestaurantWiFiGateway >nul 2>&1 || sc.exe create RestaurantWiFiGateway binPath= ""{app}\Gateway\RestaurantWiFiGateway.exe"" start= auto DisplayName= ""Restaurant WiFi Gateway"""; Flags: runhidden waituntilterminated
+Filename: "{cmd}"; Parameters: "/C sc.exe config RestaurantWiFiGateway binPath= ""{app}\Gateway\RestaurantWiFiGateway.exe"" start= auto"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall add rule name=""Restaurant WiFi Portal"" dir=in action=allow protocol=TCP localport=8088"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc.exe start RestaurantWiFiGateway"; Flags: runhidden waituntilterminated
@@ -45,3 +46,34 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch Restaurant WiFi Control"
 Filename: "{cmd}"; Parameters: "/C sc.exe stop RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc.exe delete RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  Parameters: String;
+begin
+  if CurStep <> ssInstall then
+    Exit;
+
+  { Stop the existing service before overwriting locked files.
+    Initial installations with no service are safe to proceed. }
+  Parameters := '-NoProfile -NonInteractive -Command "' +
+    '$ErrorActionPreference = ''Stop''; ' +
+    '$s = Get-Service -Name ''RestaurantWiFiGateway'' -ErrorAction SilentlyContinue; ' +
+    'if ($null -ne $s -and $s.Status -ne ''Stopped'') { ' +
+    'Stop-Service -Name ''RestaurantWiFiGateway'' -Force; ' +
+    '$s.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)); ' +
+    'if ($s.Status -ne ''Stopped'') { exit 1 } }"';
+
+  if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+     (ResultCode <> 0) then
+  begin
+    MsgBox('Cannot stop the existing Restaurant WiFi Gateway service. ' +
+      'The installer will not overwrite running service files. ' +
+      'Close the application and retry as administrator.',
+      mbError, MB_OK);
+    Abort;
+  end;
+end;
