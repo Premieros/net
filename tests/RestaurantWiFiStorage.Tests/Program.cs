@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using RestaurantWiFiStorage;
+using RestaurantWiFiNetworking;
 
 var count = 0;
 void Check(bool condition, string message)
@@ -43,6 +44,31 @@ try
     Check(sessionRoot["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "expired", "Expired session records lifecycle status");
     Check(sessionRoot["Clients"]![1]!["Connected"]!.GetValue<bool>(), "Unexpired sessions remain logically active");
     Check(SessionLifecycle.Expire(sessionRoot, new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 0, "Expiry is idempotent");
+    // AP location is independent of which device is the internet gateway.
+    var pcAp = TopologyValidator.Assess(new AccessPointTopology(
+        AccessPointOrigin.WindowsComputer, InternetGateway.WindowsComputer,
+        WindowsForwardsClientTraffic: true, RouterHasSupportedIntegration: false));
+    Check(pcAp.Backend == EnforcementBackend.WindowsPacketFilter && !pcAp.NetworkAccessEnforcementReady,
+        "Windows-origin AP requires a real packet filtering provider");
+    var bridgeAp = TopologyValidator.Assess(new AccessPointTopology(
+        AccessPointOrigin.ExternalAccessPoint, InternetGateway.WindowsComputer,
+        WindowsForwardsClientTraffic: true, RouterHasSupportedIntegration: false));
+    Check(bridgeAp.Backend == EnforcementBackend.WindowsPacketFilter && !bridgeAp.NetworkAccessEnforcementReady,
+        "Bridge AP behind Windows uses Windows gateway enforcement path");
+    var routerAp = TopologyValidator.Assess(new AccessPointTopology(
+        AccessPointOrigin.ExternalAccessPoint, InternetGateway.Router,
+        WindowsForwardsClientTraffic: false, RouterHasSupportedIntegration: true));
+    Check(routerAp.Backend == EnforcementBackend.RouterIntegration && !routerAp.NetworkAccessEnforcementReady,
+        "Router acting as gateway needs a tested vendor-specific integration");
+    var bypass = TopologyValidator.Assess(new AccessPointTopology(
+        AccessPointOrigin.ExternalAccessPoint, InternetGateway.WindowsComputer,
+        WindowsForwardsClientTraffic: false, RouterHasSupportedIntegration: false));
+    Check(!bypass.NetworkAccessEnforcementReady && bypass.Explanation.Contains("does not traverse Windows"),
+        "AP bypassing Windows cannot be controlled by Windows-only policy");
+    var unconfigured = new UnconfiguredAdmissionController();
+    var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
+    Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
