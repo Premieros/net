@@ -116,7 +116,8 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                     "The manually confirmed IPv4 WFP trial is not active."));
             if (!IPAddress.TryParse(client.IpAddress, out var ip) ||
                 ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
-                topology!.AccessPoints.Count != 1 || !topology.AccessPoints[0].Contains(ip))
+                topology!.AccessPoints.Count != 1 || !topology.AccessPoints[0].Contains(ip) ||
+                ip.ToString() == topology.AccessPoints[0].Ipv4)
                 return ValueTask.FromResult(new AdmissionResult(false,
                     "Client source IPv4 is not within the selected Hotspot subnet."));
             if (expiresAt <= DateTimeOffset.UtcNow)
