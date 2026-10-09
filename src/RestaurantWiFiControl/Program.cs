@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RestaurantWiFiStorage;
+using System.Text.Json.Nodes;
 
 namespace RestaurantWiFiControl;
 
@@ -12,7 +13,13 @@ internal static class Program
     static void Main()
     {
         ApplicationConfiguration.Initialize();
-        Storage.Initialize();
+        try { Storage.Initialize(); }
+        catch (Exception ex)
+        {
+            MessageBox.Show("تعذر الاتصال بخدمة الإدارة المحلية. تأكد من تشغيل Restaurant WiFi Gateway بصلاحيات المسؤول.\n" +
+                ex.Message, "خدمة Gateway غير متاحة", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
         if (!Storage.HasPassword())
         {
             using var setup = new PasswordDialog(true);
@@ -80,52 +87,61 @@ internal sealed class ClientRecord
 internal static class Storage
 {
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    static readonly StateStore Store = new();
     public static AppData Data { get; private set; } = new();
 
     public static void Initialize()
     {
-        Mutate(data =>
-        {
-            if (data.Groups.Count != 0) return;
-            data.Groups.AddRange(new[]
-            {
-                new AccessGroup { Name = "العملاء", Kind = "customer", Minutes = 60, QuotaMb = 1024, DownloadMbps = 5, UploadMbps = 2, MaxDevices = 1, MaxUsesPerDevice = 2, BlockVideo = true },
-                new AccessGroup { Name = "الموظفين", Kind = "employee", Minutes = 720, QuotaMb = 4096, DownloadMbps = 10, UploadMbps = 5, MaxDevices = 1, MaxUsesPerDevice = 20, BlockVideo = false },
-                new AccessGroup { Name = "المديرين", Kind = "manager", Minutes = 1440, QuotaMb = 0, DownloadMbps = 0, UploadMbps = 0, MaxDevices = 2, MaxUsesPerDevice = 100, BlockVideo = false }
-            });
-        });
-    }
-
-    public static void Reload() =>
-        Data = JsonSerializer.Deserialize<AppData>(Store.Read(), JsonOptions) ?? new AppData();
-
-    // All desktop changes happen against the latest state under a SQLite transaction.
-    public static void Mutate(Action<AppData> change)
-    {
-        Store.Update(root =>
-        {
-            var fresh = JsonSerializer.Deserialize<AppData>(root.ToJsonString(), JsonOptions) ?? new AppData();
-            change(fresh);
-            var updated = JsonSerializer.SerializeToNode(fresh, JsonOptions)!.AsObject();
-            root.Clear();
-            foreach (var entry in updated) root[entry.Key] = entry.Value?.DeepClone();
-            return true;
-        });
+        AdminPipeClient.Send(new AdminRequest("initialize"));
         Reload();
     }
+
+    public static void Reload()
+    {
+        var snapshot = AdminPipeClient.Send(new AdminRequest("read")).Data ??
+            throw new IOException("Service returned an empty state.");
+        Data = JsonSerializer.Deserialize<AppData>(snapshot, JsonOptions) ?? new AppData();
+    }
+
+    static void Write(string operation, JsonObject payload)
+    {
+        AdminPipeClient.Send(new AdminRequest(operation, payload));
+        Reload();
+    }
+
+    public static void AddGroup(AccessGroup group) =>
+        Write("add_group", new JsonObject
+        {
+            ["Group"] = JsonSerializer.SerializeToNode(group, JsonOptions)
+        });
+
+    public static void AddCodes(Guid groupId, IReadOnlyList<AccessCode> codes) =>
+        Write("add_codes", new JsonObject
+        {
+            ["GroupId"] = groupId.ToString(),
+            ["Codes"] = JsonSerializer.SerializeToNode(codes, JsonOptions)
+        });
+
+    public static void SetRestaurantName(string name) =>
+        Write("set_name", new JsonObject { ["Name"] = name });
+
+    public static void SetNetwork(NetworkPreferences config) =>
+        Write("set_network", new JsonObject
+        {
+            ["Network"] = JsonSerializer.SerializeToNode(config, JsonOptions)
+        });
 
     public static bool HasPassword() =>
         !string.IsNullOrWhiteSpace(Data.PasswordSalt) && !string.IsNullOrWhiteSpace(Data.PasswordHash);
 
     public static void SetPassword(string password)
     {
+        if (password.Length < 12) throw new ArgumentException("Password too short.");
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 220_000, HashAlgorithmName.SHA256, 32);
-        Mutate(data =>
+        Write("set_password", new JsonObject
         {
-            data.PasswordSalt = Convert.ToBase64String(salt);
-            data.PasswordHash = Convert.ToBase64String(hash);
+            ["Salt"] = Convert.ToBase64String(salt),
+            ["Hash"] = Convert.ToBase64String(hash)
         });
     }
 
@@ -407,11 +423,9 @@ internal sealed class MainForm : Form
         {
             if (_quickGroup.SelectedItem is not AccessGroup group) return;
             var code = GenerateCode(6);
-            Storage.Mutate(data =>
+            Storage.AddCodes(group.Id, new[]
             {
-                if (!data.Groups.Any(g => g.Id == group.Id && g.Enabled)) throw new InvalidOperationException("الباقة غير متاحة.");
-                if (data.Codes.Any(c => c.Code == code)) throw new InvalidOperationException("الكود مكرر.");
-                data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() });
+                new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() }
             });
             Clipboard.SetText(code);
             MessageBox.Show($"تم إنشاء الكود ونسخه:\n{code}", "تم");
@@ -467,10 +481,10 @@ internal sealed class MainForm : Form
                 MessageBox.Show("اسم المجموعة موجود بالفعل.", "تنبيه");
                 return;
             }
-            Storage.Mutate(data =>
+            Storage.AddGroup(new AccessGroup
             {
-                if (data.Groups.Any(g => g.Name.Equals(name.Text.Trim(), StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("اسم المجموعة موجود.");
-                data.Groups.Add(new AccessGroup { Name = name.Text.Trim(), Minutes = min, QuotaMb = q, DownloadMbps = d, UploadMbps = u, MaxDevices = dev });
+                Name = name.Text.Trim(), Minutes = min, QuotaMb = q,
+                DownloadMbps = d, UploadMbps = u, MaxDevices = dev
             });
             name.Clear();
             RefreshAll();
@@ -507,17 +521,17 @@ internal sealed class MainForm : Form
                 return;
             }
             var created = new List<string>();
-            Storage.Mutate(data =>
+            var unique = new HashSet<string>(Storage.Data.Codes.Select(c => c.Code), StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < n; i++)
             {
-                if (!data.Groups.Any(g => g.Id == group.Id && g.Enabled)) throw new InvalidOperationException("الباقة غير متاحة.");
-                for (var i = 0; i < n; i++)
-                {
-                    string code;
-                    do code = GenerateCode(len); while (data.Codes.Any(x => x.Code == code));
-                    data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, MaxUses = max });
-                    created.Add(code);
-                }
-            });
+                string code;
+                do code = GenerateCode(len); while (!unique.Add(code));
+                created.Add(code);
+            }
+            Storage.AddCodes(group.Id, created.Select(code => new AccessCode
+            {
+                Code = code, GroupId = group.Id, MaxUses = max
+            }).ToArray());
             Clipboard.SetText(string.Join(Environment.NewLine, created));
             MessageBox.Show($"تم إنشاء {created.Count} كود ونسخها للحافظة.", "تم");
             RefreshAll();
@@ -569,7 +583,7 @@ internal sealed class MainForm : Form
         };
         save.Click += (_, _) =>
         {
-            Storage.Mutate(data => data.RestaurantName = string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim());
+            Storage.SetRestaurantName(string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim());
             MessageBox.Show("تم الحفظ.", "تم");
         };
         changePassword.Click += (_, _) =>
