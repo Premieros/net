@@ -38,6 +38,19 @@ public static class AdminStateCommands
                 return new AdminResponse(true);
             });
 
+        if (request.Operation == "confirm_wfp_trial_block_observed")
+            return store.Update(root =>
+            {
+                var network = root["Network"] as JsonObject ??
+                    throw new ArgumentException("No IPv4 trial is configured.");
+                if (!DateTimeOffset.TryParse(
+                    network["ExperimentalWfpTrialUntilUtc"]?.GetValue<string>(), out var until) ||
+                    until <= DateTimeOffset.UtcNow.AddSeconds(15))
+                    throw new ArgumentException("Trial is not active.");
+                network["ExperimentalWfpTrialBlockingObserved"] = true;
+                return new AdminResponse(true);
+            });
+
         if (request.Operation == "stop_wfp_trial")
             return store.Update(root =>
             {
