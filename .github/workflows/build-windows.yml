@@ -52,6 +52,10 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o installer/gateway
 
+      - name: Smoke-test Windows Gateway admin IPC
+        shell: pwsh
+        run: ./tests/Smoke-WindowsGateway.ps1
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup --no-progress -y
