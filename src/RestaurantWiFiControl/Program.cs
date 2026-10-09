@@ -29,6 +29,7 @@ internal sealed class AppData
     public string PasswordSalt { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public string RestaurantName { get; set; } = "Restaurant Wi-Fi Control";
+    public NetworkPreferences Network { get; set; } = new();
     public List<AccessGroup> Groups { get; set; } = new();
     public List<AccessCode> Codes { get; set; } = new();
     public List<ClientRecord> Clients { get; set; } = new();
@@ -559,6 +560,13 @@ internal sealed class MainForm : Form
         row.Controls.Add(save);
         row.Controls.Add(nameBox);
         row.Controls.Add(changePassword);
+        var configureNetwork = PrimaryButton("توصيل الشبكة", 150);
+        row.Controls.Add(configureNetwork);
+        configureNetwork.Click += (_, _) =>
+        {
+            using var dialog = new NetworkSetupDialog(Storage.Data.Network ?? new NetworkPreferences());
+            dialog.ShowDialog(this);
+        };
         save.Click += (_, _) =>
         {
             Storage.Mutate(data => data.RestaurantName = string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim());
