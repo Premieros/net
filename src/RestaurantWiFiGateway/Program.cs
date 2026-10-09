@@ -11,9 +11,10 @@ GatewayDataSecurity.Protect();
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
 builder.Services.AddSingleton<WfpTrialStatus>();
+// Start the admin channel before optional portal/network diagnostics.
+builder.Services.AddHostedService<AdminPipeWorker>();
 builder.Services.AddHostedService<ExperimentalWfpTrialWorker>();
 builder.Services.AddHostedService<GatewayWorker>();
-builder.Services.AddHostedService<AdminPipeWorker>();
 await builder.Build().RunAsync();
 
 sealed class GatewayWorker : BackgroundService
@@ -41,29 +42,46 @@ sealed class GatewayWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _ = ExpireSessionsLoop(stoppingToken);
-        listener = new HttpListener();
-        listener.Prefixes.Add("http://+:8088/");
-        listener.Prefixes.Add("http://127.0.0.1:8765/");
-        listener.Start();
+        // Port 8088 can be occupied by another application. Do not tear down the
+        // administrator pipe/SQLite service when the HTTP portal cannot bind.
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var ctx = await listener.GetContextAsync().WaitAsync(stoppingToken);
-                if (!await requestSlots.WaitAsync(0, stoppingToken))
+                listener = new HttpListener();
+                listener.Prefixes.Add("http://+:8088/");
+                listener.Prefixes.Add("http://127.0.0.1:8765/");
+                listener.Start();
+                Console.WriteLine("Gateway HTTP listeners started.");
+                while (!stoppingToken.IsCancellationRequested)
                 {
-                    ctx.Response.StatusCode = 503;
-                    ctx.Response.Close();
-                    continue;
+                    var ctx = await listener.GetContextAsync().WaitAsync(stoppingToken);
+                    if (!await requestSlots.WaitAsync(0, stoppingToken))
+                    {
+                        ctx.Response.StatusCode = 503;
+                        ctx.Response.Close();
+                        continue;
+                    }
+                    _ = Task.Run(async () =>
+                    {
+                        try { await Handle(ctx); }
+                        finally { requestSlots.Release(); }
+                    });
                 }
-                _ = Task.Run(async () =>
-                {
-                    try { await Handle(ctx); }
-                    finally { requestSlots.Release(); }
-                });
             }
-            catch (OperationCanceledException) { break; }
-            catch { await Task.Delay(500, stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("Gateway HTTP portal unavailable (admin pipe remains active): " +
+                    ex.GetType().Name + ": " + ex.Message);
+            }
+            finally
+            {
+                try { listener?.Close(); } catch { }
+                listener = null;
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(4), stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
     }
 
