@@ -221,6 +221,38 @@ try
         .Single(c => c["Code"]!.GetValue<string>() == "654321")["Uses"]!.GetValue<int>() == 1,
         "Parallel redemption commits exactly one use and keeps database consistent");
 
+    adminStore.Update(root =>
+    {
+        var alice = (root["Clients"] as JsonArray)!.OfType<JsonObject>()
+            .Single(c => c["AccessCode"]?.GetValue<string>() == "123456");
+        alice["SessionExpiresAt"] = "2020-01-01T00:00:00Z";
+        return true;
+    });
+    var revokedPending = adminStore.Update(root =>
+        SessionLifecycle.Expire(root, DateTimeOffset.UtcNow));
+    Check(revokedPending == 1, "Expired network-authorized session enters revocation queue");
+    var pendingState = JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "123456");
+    Check(pendingState["Connected"]!.GetValue<bool>() &&
+        pendingState["SessionStatus"]!.GetValue<string>() == "revocation-required",
+        "Expired client is not shown physically disconnected before the network revoke");
+    Check(adminStore.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow)) == 0,
+        "Repeated expiry does not silently clear unrevoked clients");
+    var noRevocation = await new SessionRevocationService(adminStore,
+        new UnconfiguredAdmissionController()).ReconcileAsync();
+    Check(noRevocation == 0 && JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "123456")
+        ["Connected"]!.GetValue<bool>(),
+        "Missing network provider cannot mark a client disconnected");
+    var revocationController = new FakeAdmissionController(true);
+    Check(await new SessionRevocationService(adminStore, revocationController).ReconcileAsync() == 1,
+        "Confirmed network rule revocation finalizes expired session");
+    var finalized = JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "123456");
+    Check(!finalized["Connected"]!.GetValue<bool>() &&
+        finalized["SessionStatus"]!.GetValue<string>() == "expired",
+        "Physically revoked client is marked logically disconnected");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
