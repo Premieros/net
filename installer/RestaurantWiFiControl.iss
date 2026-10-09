@@ -31,6 +31,7 @@ Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs creat
 Source: "gateway\*"; DestDir: "{app}\Gateway"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Embedded for pre-copy service stop; no scripts are installed in Program Files.
 Source: "StopGatewayForInstall.ps1"; Flags: dontcopy
+Source: "InstallGatewayService.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\Restaurant WiFi Control"; Filename: "{app}\{#MyAppExeName}"
@@ -40,14 +41,12 @@ Name: "{autodesktop}\Restaurant WiFi Control"; Filename: "{app}\{#MyAppExeName}"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Run]
-; The gateway is stopped in CurStepChanged(ssInstall), BEFORE [Files] replaces its executable.
-; Keep the existing service during upgrades rather than deleting it while running.
-Filename: "{cmd}"; Parameters: "/C sc.exe query RestaurantWiFiGateway >nul 2>&1 || sc.exe create RestaurantWiFiGateway binPath= ""{app}\Gateway\RestaurantWiFiGateway.exe"" start= auto DisplayName= ""Restaurant WiFi Gateway"""; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc.exe config RestaurantWiFiGateway binPath= ""{app}\Gateway\RestaurantWiFiGateway.exe"" start= auto"; Flags: runhidden waituntilterminated
+; Before copy, existing service is stopped in CurStepChanged(ssInstall).
+; After copy, reconcile missing/stale SCM registration, then verify actual Running.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{tmp}\InstallGatewayService.ps1"" -BinaryPath ""{app}\Gateway\RestaurantWiFiGateway.exe"" -LogPath ""{tmp}\gateway-install.log"""; Flags: runhidden waituntilterminated; BeforeInstall: PrepareGatewayInstallScript; AfterInstall: EnsureGatewayRunning
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall add rule name=""Restaurant WiFi Portal"" dir=in action=allow protocol=TCP localport=8088"; Flags: runhidden waituntilterminated
-Filename: "{cmd}"; Parameters: "/C sc.exe start RestaurantWiFiGateway"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Restaurant WiFi Control"; Flags: nowait postinstall skipifsilent; BeforeInstall: WaitForGatewayRunning
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Restaurant WiFi Control"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc.exe stop RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
@@ -55,25 +54,34 @@ Filename: "{cmd}"; Parameters: "/C sc.exe delete RestaurantWiFiGateway >nul 2>&1
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
 
 [Code]
-procedure WaitForGatewayRunning();
+procedure PrepareGatewayInstallScript();
+begin
+  ExtractTemporaryFile('InstallGatewayService.ps1');
+end;
+
+procedure EnsureGatewayRunning();
 var
-  Attempt: Integer;
   ResultCode: Integer;
   QuerySucceeded: Boolean;
+  Diagnostic: AnsiString;
+  Attempt: Integer;
 begin
-  { Do not launch the desktop until Service Control Manager shows a running Gateway.
-    The desktop also retries its named pipe independently. }
-  for Attempt := 1 to 25 do
+  { Avoid locale-dependent parsing of 'sc query' and its STATE field. }
+  for Attempt := 1 to 5 do
   begin
-    QuerySucceeded := Exec(ExpandConstant('{cmd}'),
-      '/C sc.exe query RestaurantWiFiGateway | findstr /R /C:"STATE.*RUNNING"',
+    QuerySucceeded := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -Command "' +
+      '$s = Get-Service -Name ''RestaurantWiFiGateway'' -ErrorAction SilentlyContinue; ' +
+      'if ($null -ne $s -and $s.Status -eq ''Running'') { exit 0 } else { exit 1 }"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if QuerySucceeded and (ResultCode = 0) then Exit;
     Sleep(1000);
   end;
-  MsgBox('Restaurant WiFi Gateway did not reach RUNNING after installation.' + #13#10 +
-    'Open services.msc and review the Gateway service and Windows Event Viewer.' + #13#10 +
-    'Setup will not launch the desktop until the service is fixed.',
+  if not LoadStringFromFile(ExpandConstant('{tmp}\gateway-install.log'), Diagnostic) then
+    Diagnostic := 'Service setup did not create a diagnostic log.';
+  MsgBox('Gateway service could not reach RUNNING after installation.' + #13#10 +
+    'Installer diagnostics:' + #13#10 + Copy(Diagnostic, 1, 1800) + #13#10 +
+    'Do not delete the ProgramData database. Please share this message.',
     mbError, MB_OK);
   Abort;
 end;
