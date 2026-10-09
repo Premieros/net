@@ -168,6 +168,8 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
     readonly List<ulong> filterIds = new();
     string fingerprint = "";
 
+    public int InstalledFilterCount => filterIds.Count;
+
     public bool Active { get; private set; }
     public string State { get; private set; } = "initializing";
     public string LastError { get; private set; } = "";
