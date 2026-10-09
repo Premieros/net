@@ -300,6 +300,13 @@ try
         preservedExpiry < DateTimeOffset.UtcNow.AddMinutes(2),
         "Rejected WFP trial settings leave the previously accepted deadline intact");
 
+    Check(AdminStateCommands.Execute(adminStore,
+        new AdminRequest("stop_wfp_trial")).Success,
+        "Administrator can cancel WFP trial regardless of adapter availability");
+    Check(JsonNode.Parse(adminStore.Read())!["Network"]!["ExperimentalWfpTrialUntilUtc"]!
+        .GetValue<string>() == "",
+        "Emergency WFP stop clears the scheduled block deadline");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
