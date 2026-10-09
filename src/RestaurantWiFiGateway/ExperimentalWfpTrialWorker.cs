@@ -48,6 +48,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
                 catch (Exception error)
                 {
                     admission.Stop();
+                    MarkTrialEnded();
                     status.Set("error", "IPv4 trial was stopped: " + error.Message);
                 }
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
@@ -57,6 +58,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         finally
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("off", "Experimental WFP rules cleared on service shutdown.");
         }
     }
@@ -70,6 +72,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             end <= DateTimeOffset.UtcNow)
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("off", "WFP test is not active (or its two-minute window has expired).");
             return;
         }
@@ -80,6 +83,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         if (accessMode is not (0 or 1))
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("invalid-network", "Select a supported downstream AP/hotspot mode.");
             return;
         }
@@ -103,6 +107,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         if (uplink is null || downlink is null)
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("missing-adapter", "Selected network interface has disappeared.");
             return;
         }
@@ -114,6 +119,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             !a.Address.IsIPv6LinkLocal))
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("ipv6-risk", "Downstream has non-link-local IPv6; refusing IPv4-only network test.");
             return;
         }
@@ -126,6 +132,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             !discovered.AccessPoints.Any(a => a.InterfaceIndex == downstreamIndex))
         {
             admission.Stop();
+            MarkTrialEnded();
             status.Set("route-mismatch", "Windows default internet route or downstream AP does not match selected adapters.");
             return;
         }
@@ -149,5 +156,29 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
                   "Verify that an uncoded phone cannot browse externally, then confirm in the admin dialog. " +
                   "IPv6 and service-stop bypass remain unverified.",
             end);
+    }
+
+    // These records must not remain "Connected" when the dynamic WFP policy
+    // vanishes on trial stop/expiry or service failure. This is a UI/database
+    // status correction; it does NOT assert that real Internet is blocked.
+    void MarkTrialEnded()
+    {
+        var clients = JsonNode.Parse(store.Read())?["Clients"] as JsonArray;
+        if (clients is null || !clients.OfType<JsonObject>().Any(client =>
+            client["ExperimentalIpv4Trial"]?.GetValue<bool>() == true &&
+            client["Connected"]?.GetValue<bool>() == true)) return;
+
+        store.Update(root =>
+        {
+            if (root["Clients"] is not JsonArray records) return false;
+            foreach (var item in records.OfType<JsonObject>().Where(client =>
+                client["ExperimentalIpv4Trial"]?.GetValue<bool>() == true &&
+                client["Connected"]?.GetValue<bool>() == true))
+            {
+                item["Connected"] = false;
+                item["SessionStatus"] = "trial-ended-uncontrolled";
+            }
+            return true;
+        });
     }
 }
