@@ -86,6 +86,17 @@ try
         "router-uplink", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
     Check(!wifiBridgeOutput.ConfigurationConsistent, "External AP requires a wired Ethernet downlink");
 
+    var win10 = WindowsCompatibility.Assess(true, 19045);
+    Check(win10.Family == WindowsEditionFamily.Windows10 && win10.TargetBuildRecognized
+        && !win10.NetworkEnforcementVerified, "Windows 10 recognized without claiming network policy is active");
+    var win11 = WindowsCompatibility.Assess(true, 22631);
+    Check(win11.Family == WindowsEditionFamily.Windows11 && win11.TargetBuildRecognized
+        && !win11.NetworkEnforcementVerified, "Windows 11 recognized without claiming network policy is active");
+    var olderWin10 = WindowsCompatibility.Assess(true, 18363);
+    Check(olderWin10.Family == WindowsEditionFamily.Windows10 && !olderWin10.TargetBuildRecognized,
+        "Older Windows 10 builds are flagged for upgrade");
+    var nonWindows = WindowsCompatibility.Assess(false, 0);
+    Check(!nonWindows.TargetBuildRecognized, "Non-Windows machines are not deployment targets");
     var unconfigured = new UnconfiguredAdmissionController();
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
