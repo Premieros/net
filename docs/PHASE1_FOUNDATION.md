@@ -1,3 +1,9 @@
+## Additional batch: session lifecycle and tests
+- Integration test runner passes migration, legacy backup, metadata preservation, concurrent single-use redemption, persistence, corrupted JSON rejection and logical session expiration/idempotence (subject to current CI).
+- Gateway periodically marks expired logical sessions as disconnected in SQLite. This does **not** stop physical network packets.
+- Portal no longer claims that internet access was actually granted: gateway code redemption only registers a session.
+- **Remaining blockers before production:** privileged service-only data ownership with authenticated IPC; managed hotspot admission and traffic inspection/shaping; real Windows Hotspot test bench. Do not rely on the current ProgramData ACL for security.
+
 # Phase 1 SQLite integration (work in progress)
 
 The WinForms desktop app and Gateway now use a common `StateStore` based on Microsoft.Data.Sqlite.
