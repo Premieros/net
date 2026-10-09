@@ -63,6 +63,6 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Restaurant-WiFi-Control-V9.1-Setup
-          path: installer/output/Restaurant_WiFi_Control_V9_1_Setup.exe
+          name: Restaurant-WiFi-Control-V9.2-Beta-Test
+          path: installer/output/Restaurant_WiFi_Control_V9_2_Beta_Setup.exe
           if-no-files-found: error
