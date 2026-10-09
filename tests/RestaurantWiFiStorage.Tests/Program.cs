@@ -80,8 +80,18 @@ try
     Check(!noGateway.ConfigurationConsistent, "Router-facing NIC must have a gateway");
     var wifiUplink = TopologyValidator.Assess(new WindowsSharingTopology(
         "router-over-wifi", "client-lan", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
-    Check(!wifiUplink.ConfigurationConsistent && wifiUplink.Explanation.Contains("wired Ethernet"),
-        "Internet uplink requires an Ethernet cable from the router");
+    Check(wifiUplink.ConfigurationConsistent && !wifiUplink.NetworkAccessEnforcementReady,
+        "Test PC accepts Wi-Fi router uplink, while packet forwarding remains unverified");
+    var wirelessUpstreamWithHotspot = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-over-wifi", "client-wifi", ClientAccessMode.WindowsHostedHotspot, true), adapters);
+    Check(wirelessUpstreamWithHotspot.ConfigurationConsistent &&
+          !wirelessUpstreamWithHotspot.NetworkAccessEnforcementReady,
+        "Wi-Fi uplink plus different virtual Wi-Fi downstream interface is a candidate only");
+    var sameWirelessAdapter = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-over-wifi", "router-over-wifi", ClientAccessMode.WindowsHostedHotspot, true), adapters);
+    Check(!sameWirelessAdapter.ConfigurationConsistent,
+        "One identical Wi-Fi adapter ID cannot be both uplink and hotspot output");
+
     var wifiBridgeOutput = TopologyValidator.Assess(new WindowsSharingTopology(
         "router-uplink", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
     Check(!wifiBridgeOutput.ConfigurationConsistent, "External AP requires a wired Ethernet downlink");
@@ -119,6 +129,18 @@ try
         subnetAdapters[1] with { Ipv4PrefixLength = null }
     });
     Check(!missingPrefix.WiringAppearsValid, "Incomplete subnet data never passes preflight");
+    var wifiSubnetAdapters = new[]
+    {
+        new AdapterSnapshot("wifi-in", "Router Wi-Fi", true, true, true,
+            NetworkInterfaceType.Wireless80211, "192.168.1.16", "192.168.1.1", 24),
+        new AdapterSnapshot("ap-ethernet-out", "Bridge AP", true, true, false,
+            NetworkInterfaceType.Ethernet, "192.168.137.1", null, 24)
+    };
+    var wifiPath = new WindowsSharingTopology(
+        "wifi-in", "ap-ethernet-out", ClientAccessMode.ExternalAccessPointBridge, true);
+    var wifiPreflight = GatewayPreflight.Check(wifiPath, wifiSubnetAdapters);
+    Check(wifiPreflight.WiringAppearsValid && !wifiPreflight.AdmissionRulesVerified,
+        "Wi-Fi internet in -> PC -> wired bridged AP passes read-only wiring preflight");
     var win10 = WindowsCompatibility.Assess(true, 19045);
     Check(win10.Family == WindowsEditionFamily.Windows10 && win10.TargetBuildRecognized
         && !win10.NetworkEnforcementVerified, "Windows 10 recognized without claiming network policy is active");
