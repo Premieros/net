@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 using RestaurantWiFiStorage;
 using RestaurantWiFiNetworking;
+using System.Net.NetworkInformation;
 
 var count = 0;
 void Check(bool condition, string message)
@@ -49,7 +50,10 @@ try
     {
         new AdapterSnapshot("router-uplink", "Ethernet Internet", true, true, true),
         new AdapterSnapshot("client-lan", "Ethernet AP", true, true, false),
-        new AdapterSnapshot("client-wifi", "Windows WiFi hotspot", true, true, false)
+        new AdapterSnapshot("client-wifi", "Windows WiFi hotspot", true, true, false,
+            NetworkInterfaceType.Wireless80211),
+        new AdapterSnapshot("router-over-wifi", "WiFi router uplink", true, true, true,
+            NetworkInterfaceType.Wireless80211)
     };
     var ap = TopologyValidator.Assess(new WindowsSharingTopology(
         "router-uplink", "client-lan", ClientAccessMode.ExternalAccessPointBridge,
@@ -74,6 +78,14 @@ try
     var noGateway = TopologyValidator.Assess(new WindowsSharingTopology(
         "client-lan", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
     Check(!noGateway.ConfigurationConsistent, "Router-facing NIC must have a gateway");
+    var wifiUplink = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-over-wifi", "client-lan", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
+    Check(!wifiUplink.ConfigurationConsistent && wifiUplink.Explanation.Contains("wired Ethernet"),
+        "Internet uplink requires an Ethernet cable from the router");
+    var wifiBridgeOutput = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-uplink", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
+    Check(!wifiBridgeOutput.ConfigurationConsistent, "External AP requires a wired Ethernet downlink");
+
     var unconfigured = new UnconfiguredAdmissionController();
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
