@@ -43,6 +43,7 @@ sealed class GatewayWorker : BackgroundService
     readonly SemaphoreSlim activationGate = new(1, 1);
     readonly SemaphoreSlim requestSlots = new(32, 32);
     readonly INetworkAdmissionController admission;
+    readonly TrialAdmissionController trialAdmission;
     readonly WfpTrialStatus trialStatus;
     readonly AccessRedemptionService redemption;
     readonly SessionRevocationService revoker;
@@ -52,6 +53,7 @@ sealed class GatewayWorker : BackgroundService
     {
         this.trialStatus = trialStatus;
         admission = trialAdmission;
+        this.trialAdmission = trialAdmission;
         Directory.CreateDirectory(dataDir);
         redemption = new AccessRedemptionService(store, admission);
         revoker = new SessionRevocationService(store, admission);
@@ -131,6 +133,7 @@ sealed class GatewayWorker : BackgroundService
                         portal = "portal-ready",
                         admissionReady = false, // Production admission remains unimplemented.
                         ipv4CodeTrialReady = admission.IsEnforcementReady,
+                        ipv4TrialPolicy = trialAdmission.Snapshot(),
                         experimentalWfp = trialStatus.Current
                     }), "application/json; charset=utf-8");
                     return;
@@ -159,8 +162,9 @@ sealed class GatewayWorker : BackgroundService
 
     async Task Activate(HttpListenerContext ctx)
     {
-        // No real Windows packet-filtering backend has been deployed. A valid code must
-        // not be consumed merely because this web portal can accept a form.
+        // No production-grade admission policy exists. This test can only
+        // install temporary IPv4 permits, which must be checked on the device.
+        // A valid code must not be consumed outside an active WFP trial.
         if (!admission.IsEnforcementReady)
         {
             ctx.Response.StatusCode = 503;
@@ -230,7 +234,7 @@ sealed class GatewayWorker : BackgroundService
 <body><div class='box'><h1>Restaurant Wi-Fi</h1><p>اختبار أكواد IPv4 مؤقت: استخدم كود اختبار فقط. خارج فترة الاختبار يمكن لجميع أجهزة Hotspot تصفح الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
 <form method='post' action='/activate'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
 
-    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم منح اتصال الشبكة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تثبيت سماح IPv4 تجريبي مؤقت. لا ضمان لمنع التجاوز أو لحصص الاستهلاك والسرعات.</p></body></html>";
+    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم تسجيل السماح التجريبي</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تثبيت قاعدة سماح IPv4 مؤقتة، لكن اتصال الهاتف الخارجي لم يُتحقق منه. افتح موقعًا خارجيًا من الهاتف الآن. هذه ليست حماية تجارية أو تحكمًا بالسرعات والحصص.</p></body></html>";
 
     static async Task Write(HttpListenerContext ctx, string text, string contentType)
     {
