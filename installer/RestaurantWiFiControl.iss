@@ -20,6 +20,11 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupLogging=yes
+; Ask Windows Restart Manager to close the desktop before copying its EXE.
+; Never silently force-close an administrator's application.
+CloseApplications=yes
+CloseApplicationsFilter=RestaurantWiFiControl.exe
+RestartApplications=no
 
 [Files]
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -75,9 +80,39 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
   Parameters: String;
+  QuerySucceeded: Boolean;
 begin
   if CurStep <> ssInstall then
     Exit;
+
+  { Inno Setup Restart Manager requests that GUI apps close. Check explicitly
+    before replacing the EXE as the app may be elevated or still running in
+    another user session. Never force-kill processes or skip files. }
+  while True do
+  begin
+    QuerySucceeded := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -Command "' +
+      'if (Get-Process -Name ''RestaurantWiFiControl'' -ErrorAction SilentlyContinue) { exit 2 }"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if not QuerySucceeded then
+    begin
+      MsgBox('Could not verify whether Restaurant WiFi Control is running.' +
+        #13#10 + 'Installation cannot safely overwrite the app executable.',
+        mbError, MB_OK);
+      Abort;
+    end;
+    if ResultCode = 0 then Break;
+    if ResultCode <> 2 then
+    begin
+      MsgBox('Could not verify desktop process state. PowerShell exit code: ' +
+        IntToStr(ResultCode), mbError, MB_OK);
+      Abort;
+    end;
+    if MsgBox('Restaurant WiFi Control is still running, possibly in the background.' +
+      #13#10 + 'Close every instance using Task Manager and then click Retry.' +
+      #13#10 + 'Choose Cancel to leave the existing installation unchanged.',
+      mbError, MB_RETRYCANCEL) <> IDRETRY then Abort;
+  end;
 
   { Stop the existing service before overwriting locked files.
     Initial installations with no service are safe to proceed. }
