@@ -18,8 +18,6 @@ try {
                 '.', 'RestaurantWiFiControlAdmin',
                 [System.IO.Pipes.PipeDirection]::InOut)
             $pipe.Connect(500)
-            $pipe.ReadTimeout = 3000
-            $pipe.WriteTimeout = 3000
             $request = [System.Text.Encoding]::UTF8.GetBytes('{"Operation":"read"}')
             $writer = [System.IO.BinaryWriter]::new($pipe)
             $reader = [System.IO.BinaryReader]::new($pipe)
