@@ -44,27 +44,36 @@ try
     Check(sessionRoot["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "expired", "Expired session records lifecycle status");
     Check(sessionRoot["Clients"]![1]!["Connected"]!.GetValue<bool>(), "Unexpired sessions remain logically active");
     Check(SessionLifecycle.Expire(sessionRoot, new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 0, "Expiry is idempotent");
-    // AP location is independent of which device is the internet gateway.
-    var pcAp = TopologyValidator.Assess(new AccessPointTopology(
-        AccessPointOrigin.WindowsComputer, InternetGateway.WindowsComputer,
-        WindowsForwardsClientTraffic: true, RouterHasSupportedIntegration: false));
-    Check(pcAp.Backend == EnforcementBackend.WindowsPacketFilter && !pcAp.NetworkAccessEnforcementReady,
-        "Windows-origin AP requires a real packet filtering provider");
-    var bridgeAp = TopologyValidator.Assess(new AccessPointTopology(
-        AccessPointOrigin.ExternalAccessPoint, InternetGateway.WindowsComputer,
-        WindowsForwardsClientTraffic: true, RouterHasSupportedIntegration: false));
-    Check(bridgeAp.Backend == EnforcementBackend.WindowsPacketFilter && !bridgeAp.NetworkAccessEnforcementReady,
-        "Bridge AP behind Windows uses Windows gateway enforcement path");
-    var routerAp = TopologyValidator.Assess(new AccessPointTopology(
-        AccessPointOrigin.ExternalAccessPoint, InternetGateway.Router,
-        WindowsForwardsClientTraffic: false, RouterHasSupportedIntegration: true));
-    Check(routerAp.Backend == EnforcementBackend.RouterIntegration && !routerAp.NetworkAccessEnforcementReady,
-        "Router acting as gateway needs a tested vendor-specific integration");
-    var bypass = TopologyValidator.Assess(new AccessPointTopology(
-        AccessPointOrigin.ExternalAccessPoint, InternetGateway.WindowsComputer,
-        WindowsForwardsClientTraffic: false, RouterHasSupportedIntegration: false));
-    Check(!bypass.NetworkAccessEnforcementReady && bypass.Explanation.Contains("does not traverse Windows"),
-        "AP bypassing Windows cannot be controlled by Windows-only policy");
+    // Router is exclusively the uplink; Windows is the gateway for both downstream modes.
+    var adapters = new[]
+    {
+        new AdapterSnapshot("router-uplink", "Ethernet Internet", true, true, true),
+        new AdapterSnapshot("client-lan", "Ethernet AP", true, true, false),
+        new AdapterSnapshot("client-wifi", "Windows WiFi hotspot", true, true, false)
+    };
+    var ap = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-uplink", "client-lan", ClientAccessMode.ExternalAccessPointBridge,
+        ClientsUseWindowsAsGateway: true), adapters);
+    Check(ap.ConfigurationConsistent && !ap.NetworkAccessEnforcementReady,
+        "Router -> Windows -> bridged AP is correctly recognized without claiming enforced access");
+    var hotspot = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-uplink", "client-wifi", ClientAccessMode.WindowsHostedHotspot,
+        ClientsUseWindowsAsGateway: true), adapters);
+    Check(hotspot.ConfigurationConsistent && !hotspot.NetworkAccessEnforcementReady,
+        "Router -> Windows -> PC hotspot is correctly recognized without claiming enforced access");
+    var sameNic = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-uplink", "router-uplink", ClientAccessMode.WindowsHostedHotspot, true), adapters);
+    Check(!sameNic.ConfigurationConsistent, "The same adapter cannot be selected on both sides");
+    var bypass = TopologyValidator.Assess(new WindowsSharingTopology(
+        "router-uplink", "client-lan", ClientAccessMode.ExternalAccessPointBridge, false), adapters);
+    Check(!bypass.ConfigurationConsistent && !bypass.NetworkAccessEnforcementReady,
+        "Bypass routes directly through the router are rejected");
+    var upstreamDown = TopologyValidator.Assess(new WindowsSharingTopology(
+        "missing", "client-lan", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
+    Check(!upstreamDown.ConfigurationConsistent, "Missing uplink adapter is rejected");
+    var noGateway = TopologyValidator.Assess(new WindowsSharingTopology(
+        "client-lan", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
+    Check(!noGateway.ConfigurationConsistent, "Router-facing NIC must have a gateway");
     var unconfigured = new UnconfiguredAdmissionController();
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
