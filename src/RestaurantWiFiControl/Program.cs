@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RestaurantWiFiStorage;
 
 namespace RestaurantWiFiControl;
 
@@ -77,52 +78,40 @@ internal sealed class ClientRecord
 
 internal static class Storage
 {
-    static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Restaurant WiFi Control");
-    static readonly string FilePath = Path.Combine(Folder, "v9-data.json");
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    static readonly StateStore Store = new();
     public static AppData Data { get; private set; } = new();
 
     public static void Initialize()
     {
-        Directory.CreateDirectory(Folder);
-        Reload();
-
-        if (Data.Groups.Count == 0)
+        Mutate(data =>
         {
-            Data.Groups.AddRange(new[]
+            if (data.Groups.Count != 0) return;
+            data.Groups.AddRange(new[]
             {
                 new AccessGroup { Name = "العملاء", Kind = "customer", Minutes = 60, QuotaMb = 1024, DownloadMbps = 5, UploadMbps = 2, MaxDevices = 1, MaxUsesPerDevice = 2, BlockVideo = true },
                 new AccessGroup { Name = "الموظفين", Kind = "employee", Minutes = 720, QuotaMb = 4096, DownloadMbps = 10, UploadMbps = 5, MaxDevices = 1, MaxUsesPerDevice = 20, BlockVideo = false },
                 new AccessGroup { Name = "المديرين", Kind = "manager", Minutes = 1440, QuotaMb = 0, DownloadMbps = 0, UploadMbps = 0, MaxDevices = 2, MaxUsesPerDevice = 100, BlockVideo = false }
             });
-            Save();
-        }
+        });
     }
 
-    public static void Reload()
-    {
-        if (!File.Exists(FilePath)) return;
-        try
-        {
-            Data = JsonSerializer.Deserialize<AppData>(File.ReadAllText(FilePath), JsonOptions) ?? new AppData();
-        }
-        catch
-        {
-            // Keep the current in-memory snapshot if the gateway is writing the file at the same moment.
-        }
-    }
+    public static void Reload() =>
+        Data = JsonSerializer.Deserialize<AppData>(Store.Read(), JsonOptions) ?? new AppData();
 
-    public static void Save()
+    // All desktop changes happen against the latest state under a SQLite transaction.
+    public static void Mutate(Action<AppData> change)
     {
-        // Replace the file atomically so readers never observe partially written JSON.
-        // Full multi-process consistency will be delivered with the SQLite migration.
-        var temp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
+        Store.Update(root =>
         {
-            File.WriteAllText(temp, JsonSerializer.Serialize(Data, JsonOptions), Encoding.UTF8);
-            File.Move(temp, FilePath, true);
-        }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+            var fresh = JsonSerializer.Deserialize<AppData>(root.ToJsonString(), JsonOptions) ?? new AppData();
+            change(fresh);
+            var updated = JsonSerializer.SerializeToNode(fresh, JsonOptions)!.AsObject();
+            root.Clear();
+            foreach (var entry in updated) root[entry.Key] = entry.Value?.DeepClone();
+            return true;
+        });
+        Reload();
     }
 
     public static bool HasPassword() =>
@@ -132,9 +121,11 @@ internal static class Storage
     {
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 220_000, HashAlgorithmName.SHA256, 32);
-        Data.PasswordSalt = Convert.ToBase64String(salt);
-        Data.PasswordHash = Convert.ToBase64String(hash);
-        Save();
+        Mutate(data =>
+        {
+            data.PasswordSalt = Convert.ToBase64String(salt);
+            data.PasswordHash = Convert.ToBase64String(hash);
+        });
     }
 
     public static bool VerifyPassword(string password)
@@ -415,8 +406,12 @@ internal sealed class MainForm : Form
         {
             if (_quickGroup.SelectedItem is not AccessGroup group) return;
             var code = GenerateCode(6);
-            Storage.Data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() });
-            Storage.Save();
+            Storage.Mutate(data =>
+            {
+                if (!data.Groups.Any(g => g.Id == group.Id && g.Enabled)) throw new InvalidOperationException("الباقة غير متاحة.");
+                if (data.Codes.Any(c => c.Code == code)) throw new InvalidOperationException("الكود مكرر.");
+                data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() });
+            });
             Clipboard.SetText(code);
             MessageBox.Show($"تم إنشاء الكود ونسخه:\n{code}", "تم");
             label.Clear();
@@ -471,8 +466,11 @@ internal sealed class MainForm : Form
                 MessageBox.Show("اسم المجموعة موجود بالفعل.", "تنبيه");
                 return;
             }
-            Storage.Data.Groups.Add(new AccessGroup { Name = name.Text.Trim(), Minutes = min, QuotaMb = q, DownloadMbps = d, UploadMbps = u, MaxDevices = dev });
-            Storage.Save();
+            Storage.Mutate(data =>
+            {
+                if (data.Groups.Any(g => g.Name.Equals(name.Text.Trim(), StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("اسم المجموعة موجود.");
+                data.Groups.Add(new AccessGroup { Name = name.Text.Trim(), Minutes = min, QuotaMb = q, DownloadMbps = d, UploadMbps = u, MaxDevices = dev });
+            });
             name.Clear();
             RefreshAll();
         };
@@ -508,14 +506,17 @@ internal sealed class MainForm : Form
                 return;
             }
             var created = new List<string>();
-            for (var i = 0; i < n; i++)
+            Storage.Mutate(data =>
             {
-                string code;
-                do code = GenerateCode(len); while (Storage.Data.Codes.Any(x => x.Code == code));
-                Storage.Data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, MaxUses = max });
-                created.Add(code);
-            }
-            Storage.Save();
+                if (!data.Groups.Any(g => g.Id == group.Id && g.Enabled)) throw new InvalidOperationException("الباقة غير متاحة.");
+                for (var i = 0; i < n; i++)
+                {
+                    string code;
+                    do code = GenerateCode(len); while (data.Codes.Any(x => x.Code == code));
+                    data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, MaxUses = max });
+                    created.Add(code);
+                }
+            });
             Clipboard.SetText(string.Join(Environment.NewLine, created));
             MessageBox.Show($"تم إنشاء {created.Count} كود ونسخها للحافظة.", "تم");
             RefreshAll();
@@ -560,8 +561,7 @@ internal sealed class MainForm : Form
         row.Controls.Add(changePassword);
         save.Click += (_, _) =>
         {
-            Storage.Data.RestaurantName = string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim();
-            Storage.Save();
+            Storage.Mutate(data => data.RestaurantName = string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim());
             MessageBox.Show("تم الحفظ.", "تم");
         };
         changePassword.Click += (_, _) =>
