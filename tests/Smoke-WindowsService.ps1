@@ -68,6 +68,20 @@ try {
         Write-Host "Last IPC failure: $lastPipeError"
         Write-Host 'Final SCM service status:'
         Get-Service -Name $name | Format-List Name,Status,StartType | Out-Host
+        $dataDir = Join-Path $env:ProgramData 'Restaurant WiFi Control'
+        Write-Host "ProgramData: $env:ProgramData"
+        Write-Host "Gateway data path exists: $(Test-Path $dataDir)"
+        if (Test-Path $dataDir) {
+            Write-Host 'Gateway directory ACLs:'
+            & icacls.exe $dataDir | Out-Host
+            Get-ChildItem $dataDir -Force -ErrorAction SilentlyContinue |
+                Select-Object Name,Length,Mode,LastWriteTimeUtc | Format-Table | Out-Host
+            $database = Join-Path $dataDir 'wifi-state.db'
+            if (Test-Path $database) {
+                Write-Host 'Gateway SQLite file ACLs:'
+                & icacls.exe $database | Out-Host
+            }
+        }
         Write-Host 'Recent .NET/SCM events:'
         foreach ($log in @('Application','System')) {
             Get-WinEvent -FilterHashtable @{
