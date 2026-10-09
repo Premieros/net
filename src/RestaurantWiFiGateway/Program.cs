@@ -24,12 +24,14 @@ sealed class GatewayWorker : BackgroundService
     readonly SemaphoreSlim requestSlots = new(32, 32);
     readonly INetworkAdmissionController admission = new UnconfiguredAdmissionController();
     readonly AccessRedemptionService redemption;
+    readonly SessionRevocationService revoker;
     const int MaxFormBytes = 4096;
 
     public GatewayWorker()
     {
         Directory.CreateDirectory(dataDir);
         redemption = new AccessRedemptionService(store, admission);
+        revoker = new SessionRevocationService(store, admission);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -67,7 +69,10 @@ sealed class GatewayWorker : BackgroundService
         try
         {
             while (await timer.WaitForNextTickAsync(token))
+            {
                 store.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow));
+                await revoker.ReconcileAsync(token);
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex) { Console.Error.WriteLine("Session maintenance stopped: " + ex); }
