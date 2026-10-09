@@ -38,6 +38,14 @@ public static class AdminStateCommands
                 return new AdminResponse(true);
             });
 
+        if (request.Operation == "stop_wfp_trial")
+            return store.Update(root =>
+            {
+                if (root["Network"] is JsonObject network)
+                    network["ExperimentalWfpTrialUntilUtc"] = "";
+                return new AdminResponse(true);
+            });
+
         var payload = request.Payload ?? throw new ArgumentException("Missing command parameters.");
         return store.Update(root =>
         {
