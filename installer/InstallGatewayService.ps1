@@ -36,11 +36,13 @@ try {
             # secure destination ACL and not the original unreadable ACL.
             $legacyBytes = [System.IO.File]::ReadAllBytes($originalLegacy)
             [System.IO.File]::WriteAllBytes($temporaryStage, $legacyBytes)
-            $sourceHash = [System.Security.Cryptography.SHA256]::HashData($legacyBytes)
-            $stageHash = [System.Security.Cryptography.SHA256]::HashData(
-                [System.IO.File]::ReadAllBytes($temporaryStage))
-            if (-not ([Convert]::ToBase64String($sourceHash) -eq
-                      [Convert]::ToBase64String($stageHash))) {
+            $hasher = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $sourceHash = $hasher.ComputeHash($legacyBytes)
+                $stageHash = $hasher.ComputeHash([System.IO.File]::ReadAllBytes($temporaryStage))
+            } finally { $hasher.Dispose() }
+            if ([Convert]::ToBase64String($sourceHash) -ne
+                [Convert]::ToBase64String($stageHash)) {
                 throw "Staged legacy JSON SHA-256 integrity check failed."
             }
             Move-Item -LiteralPath $temporaryStage -Destination $stagedLegacy -Force -ErrorAction Stop
