@@ -69,9 +69,14 @@ jobs:
         shell: powershell
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\RestaurantWiFiControl.iss"'
 
+      - name: Smoke-test fresh and upgrade Windows installer (missing service regression)
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./tests/Smoke-WindowsInstaller.ps1
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Restaurant-WiFi-Control-V9.2.2-Upgrade-Fix
-          path: installer/output/Restaurant_WiFi_Control_V9_2_2_Beta_Upgrade_Fix_Setup.exe
+          name: Restaurant-WiFi-Control-V9.2.3-Installer-Fix
+          path: installer/output/Restaurant_WiFi_Control_V9_2_3_Beta_Installer_Fix_Setup.exe
           if-no-files-found: error
