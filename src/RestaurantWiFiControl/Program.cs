@@ -306,7 +306,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Restaurant Wi-Fi Control — V9.2.4 LEGACY DATA FIX (Windows 10/11)";
+        Text = "Restaurant Wi-Fi Control — V9.2.5 LEGACY IMPORT FIX (Windows 10/11)";
         Width = 1450;
         Height = 850;
         MinimumSize = new Size(1150, 680);
