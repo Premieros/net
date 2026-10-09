@@ -19,8 +19,8 @@ public static class AdminStateCommands
         if (request.Operation == "initialize")
             return store.Update(root =>
             {
-                var groups = root["Groups"] as JsonArray ?? new JsonArray();
-                root["Groups"] = groups;
+                var groups = root["Groups"] as JsonArray;
+                if (groups is null) { groups = new JsonArray(); root["Groups"] = groups; }
                 if (groups.Count != 0) return new AdminResponse(true);
                 foreach (var (name, kind, minutes, quota, down, up, devices, uses, block) in new[]
                 {
@@ -60,7 +60,7 @@ public static class AdminStateCommands
                     if (groups.OfType<JsonObject>().Any(g =>
                         string.Equals(g["Name"]?.GetValue<string>(), name, StringComparison.OrdinalIgnoreCase)))
                         throw new ArgumentException("Group already exists.");
-                    root["Groups"] = groups;
+                    if (root["Groups"] is null) root["Groups"] = groups;
                     groups.Add(group.DeepClone());
                     return new AdminResponse(true);
                 }
@@ -88,7 +88,7 @@ public static class AdminStateCommands
                             item["MaxUses"]?.GetValue<int>() is not int maxUses || maxUses < 1)
                             throw new ArgumentException("Invalid, duplicate, or mismatched access code.");
                     }
-                    root["Codes"] = existing;
+                    if (root["Codes"] is null) root["Codes"] = existing;
                     foreach (var item in toAdd) existing.Add(item!.DeepClone());
                     return new AdminResponse(true);
                 }
