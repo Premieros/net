@@ -38,6 +38,7 @@ try {
     }
 
     $pipeReady = $false
+    $lastPipeError = ''
     for ($attempt = 0; $attempt -lt 12; $attempt++) {
         $pipe = $null
         try {
@@ -57,10 +58,27 @@ try {
             if ($response.Success -ne $true) { throw "Pipe rejected read: $($response.Error)" }
             $pipeReady = $true
             break
-        } catch { Start-Sleep -Milliseconds 350 }
+        } catch {
+            $lastPipeError = $_.Exception.ToString()
+            Start-Sleep -Milliseconds 350
+        }
         finally { if ($null -ne $pipe) { $pipe.Dispose() } }
     }
-    if (-not $pipeReady) { throw 'Running Windows service did not respond to administrator IPC.' }
+    if (-not $pipeReady) {
+        Write-Host "Last IPC failure: $lastPipeError"
+        Write-Host 'Final SCM service status:'
+        Get-Service -Name $name | Format-List Name,Status,StartType | Out-Host
+        Write-Host 'Recent .NET/SCM events:'
+        foreach ($log in @('Application','System')) {
+            Get-WinEvent -FilterHashtable @{
+                LogName = $log
+                StartTime = (Get-Date).AddMinutes(-4)
+            } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'RestaurantWiFiGateway|Restaurant WiFi Gateway' } |
+            Select-Object -First 5 -Property ProviderName,Id,Message | Format-List | Out-Host
+        }
+        throw 'Running Windows service did not respond to administrator IPC.'
+    }
     Write-Host 'PASS: Running Windows service responds over restricted admin named pipe.'
 } finally {
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
