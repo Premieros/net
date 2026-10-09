@@ -40,7 +40,7 @@ Filename: "{cmd}"; Parameters: "/C sc.exe config RestaurantWiFiGateway binPath= 
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall add rule name=""Restaurant WiFi Portal"" dir=in action=allow protocol=TCP localport=8088"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc.exe start RestaurantWiFiGateway"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch Restaurant WiFi Control"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Restaurant WiFi Control"; Flags: nowait postinstall skipifsilent; BeforeInstall: WaitForGatewayRunning
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc.exe stop RestaurantWiFiGateway >nul 2>&1"; Flags: runhidden waituntilterminated
@@ -48,6 +48,29 @@ Filename: "{cmd}"; Parameters: "/C sc.exe delete RestaurantWiFiGateway >nul 2>&1
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Restaurant WiFi Portal"" >nul 2>&1"; Flags: runhidden waituntilterminated
 
 [Code]
+procedure WaitForGatewayRunning();
+var
+  Attempt: Integer;
+  ResultCode: Integer;
+  QuerySucceeded: Boolean;
+begin
+  { Do not launch the desktop until Service Control Manager shows a running Gateway.
+    The desktop also retries its named pipe independently. }
+  for Attempt := 1 to 25 do
+  begin
+    QuerySucceeded := Exec(ExpandConstant('{cmd}'),
+      '/C sc.exe query RestaurantWiFiGateway | findstr /R /C:"STATE.*RUNNING"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if QuerySucceeded and (ResultCode = 0) then Exit;
+    Sleep(1000);
+  end;
+  MsgBox('Restaurant WiFi Gateway did not reach RUNNING after installation.' + #13#10 +
+    'Open services.msc and review the Gateway service and Windows Event Viewer.' + #13#10 +
+    'Setup will not launch the desktop until the service is fixed.',
+    mbError, MB_OK);
+  Abort;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
