@@ -27,6 +27,7 @@ catch (Exception ex)
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "RestaurantWiFiGateway");
 builder.Services.AddSingleton<WfpTrialStatus>();
+builder.Services.AddSingleton<TrialAdmissionController>();
 // Start the admin channel before optional portal/network diagnostics.
 builder.Services.AddHostedService<AdminPipeWorker>();
 builder.Services.AddHostedService<ExperimentalWfpTrialWorker>();
@@ -41,15 +42,16 @@ sealed class GatewayWorker : BackgroundService
     HttpListener? listener;
     readonly SemaphoreSlim activationGate = new(1, 1);
     readonly SemaphoreSlim requestSlots = new(32, 32);
-    readonly INetworkAdmissionController admission = new UnconfiguredAdmissionController();
+    readonly INetworkAdmissionController admission;
     readonly WfpTrialStatus trialStatus;
     readonly AccessRedemptionService redemption;
     readonly SessionRevocationService revoker;
     const int MaxFormBytes = 4096;
 
-    public GatewayWorker(WfpTrialStatus trialStatus)
+    public GatewayWorker(WfpTrialStatus trialStatus, TrialAdmissionController trialAdmission)
     {
         this.trialStatus = trialStatus;
+        admission = trialAdmission;
         Directory.CreateDirectory(dataDir);
         redemption = new AccessRedemptionService(store, admission);
         revoker = new SessionRevocationService(store, admission);
@@ -127,7 +129,8 @@ sealed class GatewayWorker : BackgroundService
                     await Write(ctx, JsonSerializer.Serialize(new
                     {
                         portal = "portal-ready",
-                        admissionReady = admission.IsEnforcementReady,
+                        admissionReady = false, // Production admission remains unimplemented.
+                        ipv4CodeTrialReady = admission.IsEnforcementReady,
                         experimentalWfp = trialStatus.Current
                     }), "application/json; charset=utf-8");
                     return;
@@ -145,7 +148,7 @@ sealed class GatewayWorker : BackgroundService
             }
             if (ctx.Request.HttpMethod != "GET") { ctx.Response.StatusCode = 405; ctx.Response.Close(); return; }
             await Write(ctx, PortalHtml(admission.IsEnforcementReady ? "" :
-                "هذه البوابة في وضع الإعداد. تفعيل الأكواد متوقف حتى يتم التأكد من التحكم بالشبكة."),
+                "وضع تجريبي فقط: لا تعمل الأكواد إلا بعد حجب IPv4 مؤقتًا وتأكيده يدويًا من المدير."),
                 "text/html; charset=utf-8");
         }
         catch
@@ -161,7 +164,7 @@ sealed class GatewayWorker : BackgroundService
         if (!admission.IsEnforcementReady)
         {
             ctx.Response.StatusCode = 503;
-            await Write(ctx, PortalHtml("التحكم الفعلي بالإنترنت لم يجهز بعد. لم يتم استخدام الكود."),
+            await Write(ctx, PortalHtml("تفعيل الأكواد متوقف. شغّل اختبار حجب IPv4 وتأكد من انقطاع الإنترنت على هاتف الاختبار ثم أكد الحجب من برنامج الإدارة. لم يُستخدم الكود."),
                 "text/html; charset=utf-8");
             return;
         }
@@ -224,10 +227,10 @@ sealed class GatewayWorker : BackgroundService
 
     static string PortalHtml(string error) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Restaurant Wi-Fi</title>
 <style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;margin:0;color:#111827}}.box{{max-width:420px;margin:8vh auto;background:white;border-radius:18px;padding:28px;box-shadow:0 20px 60px #0005}}h1{{margin:0 0 6px}}p{{color:#64748b}}input{{box-sizing:border-box;width:100%;padding:13px;margin:7px 0;border:1px solid #cbd5e1;border-radius:10px;font-size:16px}}button{{width:100%;padding:14px;margin-top:12px;border:0;border-radius:10px;background:#2563eb;color:white;font-size:17px;font-weight:700}}.err{{color:#b91c1c;background:#fee2e2;padding:10px;border-radius:8px}}</style></head>
-<body><div class='box'><h1>Restaurant Wi-Fi</h1><p>أدخل بياناتك وكود الدخول لتفعيل الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
+<body><div class='box'><h1>Restaurant Wi-Fi</h1><p>اختبار أكواد IPv4 مؤقت: استخدم كود اختبار فقط. خارج فترة الاختبار يمكن لجميع أجهزة Hotspot تصفح الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
 <form method='post' action='/activate'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
 
-    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم منح اتصال الشبكة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تطبيق صلاحيات الاتصال والتحقق منها.</p></body></html>";
+    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم منح اتصال الشبكة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تثبيت سماح IPv4 تجريبي مؤقت. لا ضمان لمنع التجاوز أو لحصص الاستهلاك والسرعات.</p></body></html>";
 
     static async Task Write(HttpListenerContext ctx, string text, string contentType)
     {
