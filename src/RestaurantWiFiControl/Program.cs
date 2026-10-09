@@ -130,6 +130,12 @@ internal static class Storage
     public static void SetRestaurantName(string name) =>
         Write("set_name", new JsonObject { ["Name"] = name });
 
+    public static void StopNetworkTrial()
+    {
+        AdminPipeClient.Send(new AdminRequest("stop_wfp_trial"));
+        Reload();
+    }
+
     public static void SetNetwork(NetworkPreferences config) =>
         Write("set_network", new JsonObject
         {
