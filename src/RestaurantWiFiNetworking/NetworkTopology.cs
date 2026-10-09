@@ -34,7 +34,7 @@ public sealed record WindowsSharingTopology(
 public sealed record AdapterSnapshot(
     string Id, string Name, bool IsUp, bool HasIpv4Address, bool HasIpv4DefaultGateway,
     NetworkInterfaceType InterfaceType = NetworkInterfaceType.Ethernet,
-    string? Ipv4Address = null, string? Ipv4Gateway = null);
+    string? Ipv4Address = null, string? Ipv4Gateway = null, int? Ipv4PrefixLength = null);
 
 public sealed record TopologyAssessment(
     EnforcementBackend Backend,
@@ -59,7 +59,8 @@ public static class WindowsAdapterDiscovery
                     n.NetworkInterfaceType,
                     ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork)?.Address.ToString(),
                     ip.GatewayAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork
-                        && !System.Net.IPAddress.Any.Equals(a.Address))?.Address.ToString());
+                        && !System.Net.IPAddress.Any.Equals(a.Address))?.Address.ToString(),
+                    ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork)?.PrefixLength);
             })
             .ToArray();
 }
