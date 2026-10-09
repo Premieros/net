@@ -87,10 +87,10 @@ public static class TopologyValidator
             return Invalid("One or both configured Windows network adapters were not found.");
         if (upstream.InterfaceType is not (NetworkInterfaceType.Ethernet or
             NetworkInterfaceType.GigabitEthernet or NetworkInterfaceType.FastEthernetFx or
-            NetworkInterfaceType.FastEthernetT))
-            return Invalid("Router upstream must be a wired Ethernet adapter, not Wi-Fi.");
+            NetworkInterfaceType.FastEthernetT or NetworkInterfaceType.Wireless80211))
+            return Invalid("Router uplink must be Ethernet or Wi-Fi.");
         if (!upstream.IsUp || !upstream.HasIpv4Address || !upstream.HasIpv4DefaultGateway)
-            return Invalid("Router-facing Ethernet adapter must be connected with an IPv4 address and a default gateway.");
+            return Invalid("Router-facing Ethernet/Wi-Fi adapter must be connected with an IPv4 address and default gateway.");
         if (topology.AccessMode == ClientAccessMode.ExternalAccessPointBridge &&
             downstream.InterfaceType is not (NetworkInterfaceType.Ethernet or
                 NetworkInterfaceType.GigabitEthernet or NetworkInterfaceType.FastEthernetFx or
