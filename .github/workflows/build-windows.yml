@@ -29,6 +29,9 @@ jobs:
       - name: Restore gateway service
         run: dotnet restore src/RestaurantWiFiGateway/RestaurantWiFiGateway.csproj
 
+      - name: Run SQLite migration and concurrency integration tests
+        run: dotnet run --project tests/RestaurantWiFiStorage.Tests/RestaurantWiFiStorage.Tests.csproj -c Release
+
       - name: Publish self-contained Windows app
         run: >
           dotnet publish src/RestaurantWiFiControl/RestaurantWiFiControl.csproj
