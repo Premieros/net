@@ -26,6 +26,7 @@ sealed class GatewayWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _ = ExpireSessionsLoop(stoppingToken);
         listener = new HttpListener();
         listener.Prefixes.Add("http://+:8088/");
         listener.Prefixes.Add("http://127.0.0.1:8765/");
@@ -40,6 +41,18 @@ sealed class GatewayWorker : BackgroundService
             catch (OperationCanceledException) { break; }
             catch { await Task.Delay(500, stoppingToken); }
         }
+    }
+
+    async Task ExpireSessionsLoop(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+                store.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex) { Console.Error.WriteLine("Session maintenance stopped: " + ex); }
     }
 
     async Task Handle(HttpListenerContext ctx)
@@ -127,6 +140,7 @@ sealed class GatewayWorker : BackgroundService
                 return new ActivationResult(false, "الباقة غير متاحة.");
             var minutes = group["Minutes"]?.GetValue<int>() ?? 0;
             if (minutes <= 0) return new ActivationResult(false, "مدة الباقة غير صالحة.");
+            SessionLifecycle.Expire(root, now);
             var clients = root["Clients"]?.AsArray() ?? new JsonArray();
             foreach (var item in clients)
             {
@@ -145,7 +159,7 @@ sealed class GatewayWorker : BackgroundService
                 ["Ip"] = ip, ["Mac"] = "", ["Group"] = groupName, ["UsedMb"] = 0, ["Connected"] = true,
                 ["SessionStartedAt"] = now.ToString("O"),
                 ["SessionExpiresAt"] = now.AddMinutes(minutes).ToString("O"),
-                ["AccessCode"] = code
+                ["AccessCode"] = code, ["SessionStatus"] = "pending-network-authorization"
             });
             matched["Uses"] = (matched["Uses"]?.GetValue<int>() ?? 0) + 1;
             return new ActivationResult(true, groupName, minutes);
@@ -170,7 +184,7 @@ sealed class GatewayWorker : BackgroundService
 <body><div class='box'><h1>Restaurant Wi-Fi</h1><p>أدخل بياناتك وكود الدخول لتفعيل الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
 <form method='post' action='/activate'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
 
-    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم تفعيل الجلسة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>يمكنك إغلاق هذه الصفحة.</p></body></html>";
+    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم تسجيل الكود</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تسجيل الجلسة؛ السماح الفعلي بالإنترنت يتطلب تهيئة التحكم بالشبكة.</p></body></html>";
 
     static async Task Write(HttpListenerContext ctx, string text, string contentType)
     {
