@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
+using RestaurantWiFiStorage;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
@@ -12,14 +13,14 @@ await builder.Build().RunAsync();
 sealed class GatewayWorker : BackgroundService
 {
     readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Restaurant WiFi Control");
-    readonly string dataFile;
+    readonly StateStore store = new();
+    readonly Dictionary<string, DateTimeOffset> lastAttempt = new(StringComparer.Ordinal);
     HttpListener? listener;
     readonly SemaphoreSlim activationGate = new(1, 1);
     const int MaxFormBytes = 4096;
 
     public GatewayWorker()
     {
-        dataFile = Path.Combine(dataDir, "v9-data.json");
         Directory.CreateDirectory(dataDir);
     }
 
@@ -67,6 +68,8 @@ sealed class GatewayWorker : BackgroundService
         }
     }
 
+    sealed record ActivationResult(bool Success, string Message, int Minutes = 0);
+
     async Task Activate(HttpListenerContext ctx)
     {
         if (ctx.Request.ContentLength64 > MaxFormBytes ||
@@ -87,76 +90,68 @@ sealed class GatewayWorker : BackgroundService
         var phone = values.GetValueOrDefault("phone", "").Trim();
         var code = values.GetValueOrDefault("code", "").Trim().ToUpperInvariant();
         var ip = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
-
-        if (name.Length < 2 || phone.Length < 5 || code.Length < 4)
+        if (name.Length < 2 || name.Length > 100 || phone.Length < 5 || phone.Length > 30 || code.Length < 4 || code.Length > 32)
         {
             await Write(ctx, PortalHtml("راجع الاسم والهاتف والكود."), "text/html; charset=utf-8"); return;
         }
-
-        JsonObject root;
-        try { root = JsonNode.Parse(File.Exists(dataFile) ? await File.ReadAllTextAsync(dataFile) : "{}")?.AsObject() ?? new JsonObject(); }
-        catch { await Write(ctx, PortalHtml("تعذر قراءة إعدادات النظام."), "text/html; charset=utf-8"); return; }
-
-        var codes = root["Codes"]?.AsArray() ?? new JsonArray();
-        JsonObject? matched = null;
-        foreach (var n in codes)
+        var now = DateTimeOffset.UtcNow;
+        foreach (var old in lastAttempt.Where(x => x.Value < now.AddMinutes(-2)).Select(x => x.Key).ToArray())
+            lastAttempt.Remove(old);
+        if (lastAttempt.TryGetValue(ip, out var previous) && now - previous < TimeSpan.FromSeconds(2))
         {
-            var o = n?.AsObject();
-            if (o is null) continue;
-            if (string.Equals(o["Code"]?.GetValue<string>(), code, StringComparison.OrdinalIgnoreCase) &&
-                (o["Enabled"]?.GetValue<bool>() ?? false) &&
-                (o["Uses"]?.GetValue<int>() ?? 0) < (o["MaxUses"]?.GetValue<int>() ?? 1))
-            { matched = o; break; }
+            ctx.Response.StatusCode = 429; ctx.Response.Close(); return;
         }
-        if (matched is null) { await Write(ctx, PortalHtml("الكود غير صحيح أو انتهى استخدامه."), "text/html; charset=utf-8"); return; }
+        lastAttempt[ip] = now;
 
-        var clients = root["Clients"]?.AsArray() ?? new JsonArray();
-        root["Clients"] = clients;
-        foreach (var n in clients)
+        var result = store.Update(root =>
         {
-            var o = n?.AsObject();
-            if (o is null) continue;
-            if ((o["Connected"]?.GetValue<bool>() ?? false) &&
-                DateTimeOffset.TryParse(o["SessionExpiresAt"]?.GetValue<string>(), out var expires) &&
-                expires > DateTimeOffset.UtcNow &&
-                string.Equals(o["Phone"]?.GetValue<string>(), phone, StringComparison.OrdinalIgnoreCase))
-            { await Write(ctx, PortalHtml("هذا الهاتف لديه جلسة نشطة بالفعل."), "text/html; charset=utf-8"); return; }
-        }
-
-        var groupId = matched["GroupId"]?.GetValue<string>() ?? "";
-        var groups = root["Groups"]?.AsArray() ?? new JsonArray();
-        JsonObject? group = null;
-        foreach (var n in groups)
-        {
-            var o = n?.AsObject();
-            if (o is not null && string.Equals(o["Id"]?.GetValue<string>(), groupId, StringComparison.OrdinalIgnoreCase))
-            { group = o; break; }
-        }
-        if (group is null || !(group["Enabled"]?.GetValue<bool>() ?? false))
-        {
-            await Write(ctx, PortalHtml("الباقة غير متاحة."), "text/html; charset=utf-8"); return;
-        }
-        var groupName = group["Name"]?.GetValue<string>() ?? "";
-        var minutes = group["Minutes"]?.GetValue<int>() ?? 60;
-        if (minutes <= 0) { ctx.Response.StatusCode = 500; ctx.Response.Close(); return; }
-
-        clients.Add(new JsonObject
-        {
-            ["Name"] = name, ["Phone"] = phone, ["Device"] = ctx.Request.UserAgent ?? "",
-            ["Ip"] = ip, ["Mac"] = "", ["Group"] = groupName, ["UsedMb"] = 0, ["Connected"] = true,
-            ["SessionStartedAt"] = DateTimeOffset.UtcNow.ToString("O"),
-            ["SessionExpiresAt"] = DateTimeOffset.UtcNow.AddMinutes(minutes).ToString("O"),
-            ["AccessCode"] = code
+            var codes = root["Codes"]?.AsArray() ?? new JsonArray();
+            JsonObject? matched = null;
+            foreach (var item in codes)
+            {
+                if (item is not JsonObject entry) continue;
+                if (string.Equals(entry["Code"]?.GetValue<string>(), code, StringComparison.OrdinalIgnoreCase) &&
+                    (entry["Enabled"]?.GetValue<bool>() ?? false) &&
+                    (entry["Uses"]?.GetValue<int>() ?? 0) < (entry["MaxUses"]?.GetValue<int>() ?? 1))
+                { matched = entry; break; }
+            }
+            if (matched is null) return new ActivationResult(false, "الكود غير صحيح أو انتهى استخدامه.");
+            var groupId = matched["GroupId"]?.GetValue<string>() ?? "";
+            var groups = root["Groups"]?.AsArray() ?? new JsonArray();
+            JsonObject? group = null;
+            foreach (var item in groups)
+                if (item is JsonObject entry &&
+                    string.Equals(entry["Id"]?.GetValue<string>(), groupId, StringComparison.OrdinalIgnoreCase))
+                { group = entry; break; }
+            if (group is null || !(group["Enabled"]?.GetValue<bool>() ?? false))
+                return new ActivationResult(false, "الباقة غير متاحة.");
+            var minutes = group["Minutes"]?.GetValue<int>() ?? 0;
+            if (minutes <= 0) return new ActivationResult(false, "مدة الباقة غير صالحة.");
+            var clients = root["Clients"]?.AsArray() ?? new JsonArray();
+            foreach (var item in clients)
+            {
+                if (item is not JsonObject client) continue;
+                if ((client["Connected"]?.GetValue<bool>() ?? false) &&
+                    DateTimeOffset.TryParse(client["SessionExpiresAt"]?.GetValue<string>(), out var expiry) &&
+                    expiry > now &&
+                    string.Equals(client["Phone"]?.GetValue<string>(), phone, StringComparison.OrdinalIgnoreCase))
+                    return new ActivationResult(false, "هذا الهاتف لديه جلسة نشطة بالفعل.");
+            }
+            root["Clients"] = clients;
+            var groupName = group["Name"]?.GetValue<string>() ?? "";
+            clients.Add(new JsonObject
+            {
+                ["Name"] = name, ["Phone"] = phone, ["Device"] = ctx.Request.UserAgent ?? "",
+                ["Ip"] = ip, ["Mac"] = "", ["Group"] = groupName, ["UsedMb"] = 0, ["Connected"] = true,
+                ["SessionStartedAt"] = now.ToString("O"),
+                ["SessionExpiresAt"] = now.AddMinutes(minutes).ToString("O"),
+                ["AccessCode"] = code
+            });
+            matched["Uses"] = (matched["Uses"]?.GetValue<int>() ?? 0) + 1;
+            return new ActivationResult(true, groupName, minutes);
         });
-        matched["Uses"] = (matched["Uses"]?.GetValue<int>() ?? 0) + 1;
-        var tmp = dataFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
-            File.Move(tmp, dataFile, true);
-        }
-        finally { if (File.Exists(tmp)) File.Delete(tmp); }
-        await Write(ctx, SuccessHtml(groupName, minutes), "text/html; charset=utf-8");
+        await Write(ctx, result.Success ? SuccessHtml(result.Message, result.Minutes) : PortalHtml(result.Message),
+            "text/html; charset=utf-8");
     }
 
     static Dictionary<string,string> ParseForm(string body)
