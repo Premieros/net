@@ -1,5 +1,16 @@
 # Internet distribution architecture — router -> Windows PC -> access point / hotspot
 
+## Confirmed hardware input
+
+The upstream internet connection is explicitly **wired Ethernet (LAN cable)** from the router into
+the Windows PC. In the WinForms Settings page choose **توصيل الشبكة** to inspect available adapters,
+select this router-facing Ethernet NIC, and choose an independent downstream NIC.
+
+- For an **external access point**, use a **second Ethernet port**, such as an additional PCIe or USB-to-Ethernet adapter, and connect its cable to the AP operating in bridge mode.
+- For a **PC hotspot**, use a compatible Wi-Fi adapter as the downstream interface; do not assume the physical Wi-Fi radio/virtual adapter is available before the hotspot is enabled.
+- The diagnostic dialog stores adapter choices in SQLite but **does not** enable Windows ICS/NAT, DHCP, captive portal filtering, or bandwidth control.
+- Recheck adapter IDs and physical cabling after moving USB adapters or changing network hardware.
+
 ## Confirmed requirement
 
 The **router supplies internet to the Windows computer**. The **computer** is responsible for forwarding
