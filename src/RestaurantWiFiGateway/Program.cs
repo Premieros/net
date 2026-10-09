@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using RestaurantWiFiStorage;
 using RestaurantWiFiGateway;
 
+GatewayDataSecurity.Protect();
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
 builder.Services.AddHostedService<GatewayWorker>();
