@@ -38,6 +38,11 @@ try
     Check(successful.Count(x => x) == 1, "Concurrent single-use code redeemed exactly once");
     Check(JsonNode.Parse(store.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Usage counter committed once");
     Check(JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "v9-data.json")))!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0, "Legacy JSON not mutated after migration");
+    var sessionRoot = JsonNode.Parse("""{"Clients":[{"Connected":true,"SessionExpiresAt":"2026-01-01T00:00:00Z"},{"Connected":true,"SessionExpiresAt":"2028-01-01T00:00:00Z"},{"Connected":false,"SessionExpiresAt":"2026-01-01T00:00:00Z"}]}""")!.AsObject();
+    Check(SessionLifecycle.Expire(sessionRoot, new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 1, "Only elapsed active sessions expire");
+    Check(sessionRoot["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "expired", "Expired session records lifecycle status");
+    Check(sessionRoot["Clients"]![1]!["Connected"]!.GetValue<bool>(), "Unexpired sessions remain logically active");
+    Check(SessionLifecycle.Expire(sessionRoot, new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 0, "Expiry is idempotent");
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
