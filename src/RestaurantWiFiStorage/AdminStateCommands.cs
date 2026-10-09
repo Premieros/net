@@ -120,6 +120,14 @@ public static class AdminStateCommands
                     if (upstream.Length is < 1 or > 256 || downstream.Length is < 1 or > 256 ||
                         upstream.Equals(downstream, StringComparison.OrdinalIgnoreCase) || mode is not (0 or 1))
                         throw new ArgumentException("Invalid adapter selection.");
+                    var trialUntil = network["ExperimentalWfpTrialUntilUtc"]?.GetValue<string>() ?? "";
+                    if (trialUntil.Length > 0)
+                    {
+                        if (!DateTimeOffset.TryParse(trialUntil, out var expires) ||
+                            expires <= DateTimeOffset.UtcNow ||
+                            expires > DateTimeOffset.UtcNow.AddMinutes(2).AddSeconds(15))
+                            throw new ArgumentException("WFP trial must be a short-lived future timestamp (up to two minutes).");
+                    }
                     root["Network"] = network.DeepClone();
                     return new AdminResponse(true);
                 }
