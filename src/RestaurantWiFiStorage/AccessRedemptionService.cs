@@ -38,7 +38,8 @@ public sealed class AccessRedemptionService
             return new(false, "التحكم بالشبكة غير جاهز؛ لم يتم استهلاك الكود.");
 
         var now = DateTimeOffset.UtcNow;
-        var reservation = store.Update(root => Reserve(root, request, now));
+        var trialUntil = (admission as ITimeLimitedTrialAdmissionController)?.TrialEndsAt;
+        var reservation = store.Update(root => Reserve(root, request, now, trialUntil));
         if (!reservation.Valid) return new(false, reservation.Message);
 
         AdmissionResult grant;
@@ -106,7 +107,8 @@ public sealed class AccessRedemptionService
         return new(false, "تعذر إتمام الجلسة؛ يلزم فحص الشبكة.");
     }
 
-    Reservation Reserve(JsonObject root, RedemptionRequest request, DateTimeOffset now)
+    Reservation Reserve(JsonObject root, RedemptionRequest request, DateTimeOffset now,
+        DateTimeOffset? trialUntil)
     {
         SessionLifecycle.Expire(root, now);
         var clients = root["Clients"] as JsonArray;
@@ -145,7 +147,12 @@ public sealed class AccessRedemptionService
 
         var id = Guid.NewGuid().ToString("N");
         var expiry = now.AddMinutes(minutes);
-        clients.Add(new JsonObject
+        if (trialUntil.HasValue && trialUntil.Value < expiry) expiry = trialUntil.Value;
+        if (expiry <= now.AddSeconds(10))
+            return new(false, "انتهت فترة اختبار IPv4؛ لم يتم استخدام الكود.");
+        var grantedMinutes = trialUntil.HasValue
+            ? (int)Math.Max(1, Math.Ceiling((expiry - now).TotalMinutes)) : minutes;
+        var newClient = new JsonObject
         {
             ["ReservationId"] = id, ["ReservationDeadline"] = now.AddMinutes(2).ToString("O"),
             ["Name"] = request.Name, ["Phone"] = request.Phone,
@@ -155,8 +162,14 @@ public sealed class AccessRedemptionService
             ["SessionStatus"] = "pending-network-authorization",
             ["SessionStartedAt"] = now.ToString("O"), ["SessionExpiresAt"] = expiry.ToString("O"),
             ["AccessCode"] = request.Code
-        });
-        return new(true, "", id, group["Name"]?.GetValue<string>() ?? "", minutes, expiry);
+        };
+        if (trialUntil.HasValue)
+        {
+            newClient["ExperimentalIpv4Trial"] = true;
+            newClient["TrialExpiresAt"] = expiry.ToString("O");
+        }
+        clients.Add(newClient);
+        return new(true, "", id, group["Name"]?.GetValue<string>() ?? "", grantedMinutes, expiry);
     }
 
     void ReleaseReservation(string id)
