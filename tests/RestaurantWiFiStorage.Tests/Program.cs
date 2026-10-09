@@ -168,6 +168,38 @@ try
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
 
+    // Code admission is never enabled merely by a network selection. A real
+    // operator must confirm a two-minute WFP block trial on test hardware.
+    var trialDirectory = Path.Combine(dir, "ipv4-trial-command-tests");
+    var trialStore = new StateStore(trialDirectory);
+    var confirmationWithoutTrialRejected = false;
+    try
+    {
+        AdminStateCommands.Execute(trialStore, new AdminRequest("confirm_wfp_trial_block_observed"));
+    }
+    catch (ArgumentException) { confirmationWithoutTrialRejected = true; }
+    Check(confirmationWithoutTrialRejected, "Operator cannot confirm IPv4 deny without an active trial");
+    var trialPayload = new JsonObject
+    {
+        ["Network"] = new JsonObject
+        {
+            ["UpstreamAdapterId"] = "wan-adapter",
+            ["DownstreamAdapterId"] = "hotspot-adapter",
+            ["AccessMode"] = 0,
+            ["ExperimentalWfpTrialUntilUtc"] = DateTimeOffset.UtcNow.AddSeconds(90).ToString("O"),
+            ["ExperimentalWfpTrialBlockingObserved"] = true
+        }
+    };
+    AdminStateCommands.Execute(trialStore, new AdminRequest("set_network", trialPayload));
+    Check(JsonNode.Parse(trialStore.Read())!["Network"]!["ExperimentalWfpTrialBlockingObserved"]!
+        .GetValue<bool>() == false, "Selecting adapters never self-confirms customer-code blocking");
+    AdminStateCommands.Execute(trialStore, new AdminRequest("confirm_wfp_trial_block_observed"));
+    Check(JsonNode.Parse(trialStore.Read())!["Network"]!["ExperimentalWfpTrialBlockingObserved"]!
+        .GetValue<bool>(), "Manual field observation is explicitly recorded");
+    AdminStateCommands.Execute(trialStore, new AdminRequest("stop_wfp_trial"));
+    Check(JsonNode.Parse(trialStore.Read())!["Network"]!["ExperimentalWfpTrialBlockingObserved"]!
+        .GetValue<bool>() == false, "Trial stop clears manual code-activation confirmation");
+
     // Privileged state operations execute a fixed whitelist under SQLite transactions.
     var adminDirectory = Path.Combine(dir, "admin-commands");
     var adminStore = new StateStore(adminDirectory);
