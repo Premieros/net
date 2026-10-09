@@ -12,6 +12,7 @@ public sealed class StateStore
 {
     readonly string dbPath;
     readonly string legacyPath;
+    readonly string stagedLegacyPath;
     readonly string connectionString;
 
     public StateStore(string? directory = null)
@@ -22,6 +23,7 @@ public sealed class StateStore
         Directory.CreateDirectory(dir);
         dbPath = Path.Combine(dir, "wifi-state.db");
         legacyPath = Path.Combine(dir, "v9-data.json");
+        stagedLegacyPath = Path.Combine(dir, "v9-data.import.json");
         connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = dbPath,
@@ -63,11 +65,29 @@ public sealed class StateStore
             string json = "{}";
             if (File.Exists(legacyPath))
             {
-                json = File.ReadAllText(legacyPath);
+                // The legacy application may have created this file with a DACL
+                // that excludes LocalSystem. The *elevated installer* may stage
+                // a byte-for-byte copy with a protected SYSTEM-readable ACL.
+                // Never silently insert {} or discard legacy data on denied access.
+                var importPath = legacyPath;
+                try
+                {
+                    json = File.ReadAllText(legacyPath);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    if (!File.Exists(stagedLegacyPath))
+                        throw new InvalidDataException(
+                            "Legacy v9-data.json cannot be read by the Gateway service. " +
+                            "Install the latest version as Administrator to stage a protected " +
+                            "migration copy; the original file remains untouched.", ex);
+                    importPath = stagedLegacyPath;
+                    json = File.ReadAllText(stagedLegacyPath);
+                }
                 _ = JsonNode.Parse(json)?.AsObject() ??
                     throw new InvalidDataException("Legacy JSON must be an object.");
                 var backup = legacyPath + ".pre-sqlite.bak";
-                if (!File.Exists(backup)) File.Copy(legacyPath, backup);
+                if (!File.Exists(backup)) File.Copy(importPath, backup);
             }
             using var insert = connection.CreateCommand();
             insert.Transaction = tx;
