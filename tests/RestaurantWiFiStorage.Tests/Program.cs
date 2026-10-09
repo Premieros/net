@@ -23,6 +23,18 @@ try
     Check(imported["Clients"]![0]!["SessionExpiresAt"]!.GetValue<string>() == "2027-01-01T00:00:00Z", "Session metadata preservation");
     Check(imported["FutureField"]!["test"]!.GetValue<bool>(), "Unknown field preservation");
     Check(File.Exists(Path.Combine(dir, "v9-data.json.pre-sqlite.bak")), "Legacy JSON backup created");
+    var stagedDir = Path.Combine(dir, "installer-secure-migration");
+    Directory.CreateDirectory(stagedDir);
+    File.WriteAllText(Path.Combine(stagedDir, "v9-data.import.json"), legacy);
+    var stagedStore = new StateStore(stagedDir);
+    Check(JsonNode.Parse(stagedStore.Read())!["RestaurantName"]!.GetValue<string>() == "Test Cafe",
+        "Installer-staged legacy JSON migrates when original is not readable or visible");
+    Check(File.Exists(Path.Combine(stagedDir, "v9-data.json.pre-sqlite.bak")),
+        "Installer-staged migration preserves a legacy backup");
+    Check(JsonNode.Parse(File.ReadAllText(Path.Combine(stagedDir, "v9-data.json.pre-sqlite.bak")))!
+        ["FutureField"]!["test"]!.GetValue<bool>(),
+        "Installer-staged backup retains unknown legacy metadata");
+
     var successful = new ConcurrentBag<bool>();
     await Task.WhenAll(Enumerable.Range(0, 24).Select(_ => Task.Run(() =>
     {
