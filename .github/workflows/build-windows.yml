@@ -56,6 +56,11 @@ jobs:
         shell: pwsh
         run: ./tests/Smoke-WindowsGateway.ps1
 
+      - name: Smoke-test real Windows Service Control Manager startup (1053 regression)
+        shell: pwsh
+        timeout-minutes: 3
+        run: ./tests/Smoke-WindowsService.ps1
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup --no-progress -y
