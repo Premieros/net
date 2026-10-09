@@ -10,6 +10,8 @@ using RestaurantWiFiNetworking;
 GatewayDataSecurity.Protect();
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
+builder.Services.AddSingleton<WfpTrialStatus>();
+builder.Services.AddHostedService<ExperimentalWfpTrialWorker>();
 builder.Services.AddHostedService<GatewayWorker>();
 builder.Services.AddHostedService<AdminPipeWorker>();
 await builder.Build().RunAsync();
@@ -23,12 +25,14 @@ sealed class GatewayWorker : BackgroundService
     readonly SemaphoreSlim activationGate = new(1, 1);
     readonly SemaphoreSlim requestSlots = new(32, 32);
     readonly INetworkAdmissionController admission = new UnconfiguredAdmissionController();
+    readonly WfpTrialStatus trialStatus;
     readonly AccessRedemptionService redemption;
     readonly SessionRevocationService revoker;
     const int MaxFormBytes = 4096;
 
-    public GatewayWorker()
+    public GatewayWorker(WfpTrialStatus trialStatus)
     {
+        this.trialStatus = trialStatus;
         Directory.CreateDirectory(dataDir);
         redemption = new AccessRedemptionService(store, admission);
         revoker = new SessionRevocationService(store, admission);
@@ -84,6 +88,16 @@ sealed class GatewayWorker : BackgroundService
         {
             if (ctx.Request.LocalEndPoint?.Port == 8765)
             {
+                if (ctx.Request.Url?.AbsolutePath == "/status/")
+                {
+                    await Write(ctx, JsonSerializer.Serialize(new
+                    {
+                        portal = "portal-ready",
+                        admissionReady = admission.IsEnforcementReady,
+                        experimentalWfp = trialStatus.Current
+                    }), "application/json; charset=utf-8");
+                    return;
+                }
                 await Write(ctx, "portal-ready", "text/plain; charset=utf-8");
                 return;
             }
