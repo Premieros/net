@@ -8,6 +8,7 @@ internal sealed class NetworkPreferences
     public string UpstreamAdapterId { get; set; } = "";
     public string DownstreamAdapterId { get; set; } = "";
     public ClientAccessMode AccessMode { get; set; } = ClientAccessMode.ExternalAccessPointBridge;
+    public string ExperimentalWfpTrialUntilUtc { get; set; } = "";
 }
 
 internal sealed class NetworkSetupDialog : Form
@@ -28,15 +29,15 @@ internal sealed class NetworkSetupDialog : Form
         original = preferences;
         Text = "إعداد الإنترنت: راوتر ← كمبيوتر ← Access Point / Hotspot";
         Width = 830;
-        Height = 650;
-        MinimumSize = new Size(720, 570);
+        Height = 730;
+        MinimumSize = new Size(720, 640);
         StartPosition = FormStartPosition.CenterParent;
         RightToLeft = RightToLeft.Yes;
         RightToLeftLayout = true;
         Font = new Font("Segoe UI", 10);
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8,
             Padding = new Padding(16)
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
@@ -45,6 +46,7 @@ internal sealed class NetworkSetupDialog : Form
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         Controls.Add(root);
 
@@ -82,7 +84,20 @@ internal sealed class NetworkSetupDialog : Form
         var save = new Button { Text = "حفظ الاختيارات", Width = 145, Height = 35 };
         var close = new Button { Text = "إغلاق", Width = 105, Height = 35 };
         actions.Controls.AddRange(new Control[] { scan, inspect, save, close });
-        root.Controls.Add(actions, 0, 6);
+        root.Controls.Add(actions, 0, 7);
+
+        var trialActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
+        };
+        var tryBlock = new Button { Text = "اختبار حجب IPv4 لمدة دقيقتين", Width = 275, Height = 35 };
+        var stopBlock = new Button { Text = "إيقاف اختبار الحجب", Width = 185, Height = 35 };
+        trialActions.Controls.Add(tryBlock);
+        trialActions.Controls.Add(stopBlock);
+        root.Controls.Add(trialActions, 0, 6);
+        tryBlock.Click += (_, _) => UpdateTrial(true);
+        stopBlock.Click += (_, _) => UpdateTrial(false);
         scan.Click += (_, _) => Scan();
         inspect.Click += (_, _) => Report();
         save.Click += (_, _) => SaveSelection();
@@ -182,6 +197,49 @@ internal sealed class NetworkSetupDialog : Form
                           (safety.Issues.Count == 0 ? "" : "\r\nمشكلات مكتشفة:\r\n- " +
                               string.Join("\r\n- ", safety.Issues)) + "\r\n\r\n" +
                           "تنبيه: لم يتم التأكد من NAT/DHCP أو بوابة العملاء أو فرض حجب الإنترنت.";
+    }
+
+    void UpdateTrial(bool enable)
+    {
+        var uplink = (upstream.SelectedItem as AdapterChoice)?.Adapter;
+        var downlink = (downstream.SelectedItem as AdapterChoice)?.Adapter;
+        if (uplink is null || downlink is null)
+        {
+            MessageBox.Show("اختر كرت LAN من الراوتر وكرت توزيع الإنترنت أولاً.", "اختبار الشبكة");
+            return;
+        }
+        var selected = new WindowsSharingTopology(
+            uplink.Id, downlink.Id,
+            mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
+                ClientAccessMode.ExternalAccessPointBridge, true);
+        var safety = GatewayPreflight.Check(selected, detected);
+        if (!safety.WiringAppearsValid)
+        {
+            MessageBox.Show("لا يمكن الاختبار قبل تصحيح التوصيل:\n" +
+                string.Join("\n", safety.Issues), "اختبار الشبكة");
+            return;
+        }
+        if (enable && MessageBox.Show(
+                "تجربة متقدمة على شبكة اختبار معزولة فقط.\n" +
+                "قد يتوقف الإنترنت عن أجهزة الـAP/Hotspot لمدة دقيقتين، " +
+                "ولا تضمن هذه التجربة منع IPv6 أو عمل الأكواد.\n" +
+                "لن نقوم بتغيير إعدادات NAT/ICS. اختبر من هاتف منفصل. هل تتابع؟",
+                "تأكيد تجربة WFP المؤقتة", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        Storage.SetNetwork(new NetworkPreferences
+        {
+            UpstreamAdapterId = selected.UpstreamAdapterId,
+            DownstreamAdapterId = selected.DownstreamAdapterId,
+            AccessMode = selected.AccessMode,
+            ExperimentalWfpTrialUntilUtc = enable ?
+                DateTimeOffset.UtcNow.AddMinutes(2).ToString("O") : ""
+        });
+        MessageBox.Show(enable ?
+            "تم طلب اختبار الحجب لمدة دقيقتين. افتح حالة خدمة Gateway ثم اختبر الإنترنت " +
+            "من جهاز عميل متصل بالـAccess Point، وليس من الكمبيوتر." :
+            "تم طلب إنهاء اختبار الحجب. تحقق من الحالة والاتصال على جهاز العميل.",
+            "اختبار الشبكة", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     void SaveSelection()
