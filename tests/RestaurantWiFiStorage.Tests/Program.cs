@@ -253,6 +253,28 @@ try
         finalized["SessionStatus"]!.GetValue<string>() == "expired",
         "Physically revoked client is marked logically disconnected");
 
+    var validTrial = new JsonObject
+    {
+        ["UpstreamAdapterId"] = "uplink", ["DownstreamAdapterId"] = "out",
+        ["AccessMode"] = 1,
+        ["ExperimentalWfpTrialUntilUtc"] = DateTimeOffset.UtcNow.AddMinutes(1).ToString("O")
+    };
+    Check(AdminStateCommands.Execute(adminStore, new AdminRequest("set_network",
+        new JsonObject { ["Network"] = validTrial.DeepClone() })).Success,
+        "Explicit, two-minute-maximum experimental WFP test can be scheduled");
+    bool overlongTrialRejected = false;
+    validTrial["ExperimentalWfpTrialUntilUtc"] = DateTimeOffset.UtcNow.AddHours(1).ToString("O");
+    try
+    {
+        AdminStateCommands.Execute(adminStore, new AdminRequest("set_network",
+            new JsonObject { ["Network"] = validTrial.DeepClone() }));
+    }
+    catch (ArgumentException) { overlongTrialRejected = true; }
+    Check(overlongTrialRejected, "Long-running WFP block attempts are rejected by service");
+    Check(!JsonNode.Parse(adminStore.Read())!["Network"]!["ExperimentalWfpTrialUntilUtc"]!
+        .GetValue<string>().Contains("does-not-exist") && overlongTrialRejected,
+        "Rejected WFP trial settings leave valid configuration untouched");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
