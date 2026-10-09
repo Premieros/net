@@ -82,6 +82,12 @@ internal sealed class ClientRecord
     // Preserve gateway-owned session fields when the desktop app saves the shared JSON.
     [JsonExtensionData]
     public Dictionary<string, JsonElement> AdditionalFields { get; set; } = new();
+
+    [JsonIgnore]
+    public bool HasAuthorizedSession => Connected &&
+        AdditionalFields.TryGetValue("SessionStatus", out var status) &&
+        status.ValueKind == JsonValueKind.String &&
+        status.GetString() == "network-authorized";
 }
 
 internal static class Storage
@@ -315,7 +321,7 @@ internal sealed class MainForm : Form
         {
             var status = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
             _gatewayStatus.Text = status.Contains("portal-ready", StringComparison.OrdinalIgnoreCase)
-                ? "Gateway Service: متصل — Portal جاهز"
+                ? "Gateway Service: البوابة تعمل — صلاحيات الإنترنت قيد التطوير"
                 : "Gateway Service: متصل";
             _gatewayStatus.ForeColor = Color.SeaGreen;
             Storage.Reload();
@@ -409,7 +415,7 @@ internal sealed class MainForm : Form
 
         _metricGroups = Metric(metrics, 0, "المجموعات");
         _metricCodes = Metric(metrics, 1, "الأكواد الفعالة");
-        _metricOnline = Metric(metrics, 2, "المتصلون الآن");
+        _metricOnline = Metric(metrics, 2, "الجلسات المصرح بها");
         _metricClients = Metric(metrics, 3, "المستخدمون");
         page.Controls.Add(metrics);
 
@@ -552,7 +558,7 @@ internal sealed class MainForm : Form
         var info = Card(page, DockStyle.Bottom, 55);
         info.Controls.Add(new Label
         {
-            Text = "Gateway Service والبوابة مدمجان في V9.1. الحجب والتحويل التلقائي قيد اختبار طبقة الشبكة على جهاز الـHotspot.",
+            Text = "حالة الجلسة لا تعني التحكم الفعلي بالإنترنت. الحجب والسرعات وتجديد الجلسات قيد تطوير طبقة Windows Gateway.",
             Dock = DockStyle.Fill,
             ForeColor = Color.DarkOrange,
             TextAlign = ContentAlignment.MiddleRight
@@ -662,7 +668,7 @@ internal sealed class MainForm : Form
 
     void RefreshAll()
     {
-        var groups = Storage.Data.Groups.Where(g => g.Enabled && g.Kind != "customer").ToList();
+        var groups = Storage.Data.Groups.Where(g => g.Enabled).ToList();
         if (_quickGroup is not null)
         {
             _quickGroup.DataSource = groups.ToList();
@@ -715,13 +721,16 @@ internal sealed class MainForm : Form
                 MAC = c.Mac,
                 المجموعة = c.Group,
                 الاستهلاك = $"{c.UsedMb:0.0} MB",
-                الحالة = c.Connected ? "متصل" : "غير متصل"
+                الحالة = c.HasAuthorizedSession ? "جلسة مصرح بها" :
+                    c.AdditionalFields.TryGetValue("SessionStatus", out var status) && status.ValueKind == JsonValueKind.String ?
+                        status.GetString() == "pending-network-authorization" ? "بانتظار الشبكة" :
+                        status.GetString() == "revocation-required" ? "يحتاج مراجعة" : "غير متصل" : "غير متصل"
             }).ToList();
         }
 
         if (_metricGroups is not null) _metricGroups.Text = Storage.Data.Groups.Count.ToString();
         if (_metricCodes is not null) _metricCodes.Text = Storage.Data.Codes.Count(c => c.Enabled).ToString();
-        if (_metricOnline is not null) _metricOnline.Text = Storage.Data.Clients.Count(c => c.Connected).ToString();
+        if (_metricOnline is not null) _metricOnline.Text = Storage.Data.Clients.Count(c => c.HasAuthorizedSession).ToString();
         if (_metricClients is not null) _metricClients.Text = Storage.Data.Clients.Count.ToString();
     }
 
