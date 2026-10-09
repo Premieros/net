@@ -28,6 +28,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
     readonly WfpTrialStatus status;
     readonly TrialAdmissionController admission;
     readonly StateStore store = new();
+    readonly DateTimeOffset workerStartedUtc = DateTimeOffset.UtcNow;
 
     public ExperimentalWfpTrialWorker(WfpTrialStatus status, TrialAdmissionController admission)
     {
@@ -140,7 +141,12 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         // Exact selected interface pair only. Manual field verification is
         // required before the trial permits code activation.
         var onlySelectedClientAp = discovered.AccessPoints.Single(a => a.InterfaceIndex == downstreamIndex);
-        var confirmed = network?["ExperimentalWfpTrialBlockingObserved"]?.GetValue<bool>() == true;
+        // A dynamic WFP session vanishes when the process exits. A confirmation
+        // from a prior process is never valid evidence of today's packet policy.
+        var observedAt = network?["ExperimentalWfpTrialBlockingObservedAtUtc"]?.GetValue<string>();
+        var confirmed = network?["ExperimentalWfpTrialBlockingObserved"]?.GetValue<bool>() == true &&
+            DateTimeOffset.TryParse(observedAt, out var observed) && observed > workerStartedUtc;
+        if (!confirmed) MarkTrialEnded();
         admission.Apply(new NetworkTopologySnapshot
         {
             Wan = discovered.Wan,
