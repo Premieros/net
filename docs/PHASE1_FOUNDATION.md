@@ -1,3 +1,12 @@
+# Access Point requirement update
+
+This project targets **Access Points sourced from the Windows computer or from an external router/AP**, not just the Windows Mobile Hotspot feature.
+The network must be classified by **which device routes internet packets**, not by which device broadcasts Wi-Fi.
+See [Access Point Architecture](ACCESS_POINT_ARCHITECTURE.md).
+No real gateway enforcement has been implemented for either mode.
+
+---
+
 ## Additional batch: session lifecycle and tests
 - Integration test runner passes migration, legacy backup, metadata preservation, concurrent single-use redemption, persistence, corrupted JSON rejection and logical session expiration/idempotence (subject to current CI).
 - Gateway periodically marks expired logical sessions as disconnected in SQLite. This does **not** stop physical network packets.
