@@ -26,24 +26,28 @@ internal sealed class WfpTrialStatus
 internal sealed class ExperimentalWfpTrialWorker : BackgroundService
 {
     readonly WfpTrialStatus status;
+    readonly TrialAdmissionController admission;
     readonly StateStore store = new();
 
-    public ExperimentalWfpTrialWorker(WfpTrialStatus status) => this.status = status;
+    public ExperimentalWfpTrialWorker(WfpTrialStatus status, TrialAdmissionController admission)
+    {
+        this.status = status;
+        this.admission = admission;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        using var gate = new ExperimentalWfpForwardGate();
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
-                    InspectAndApply(gate);
+                    InspectAndApply();
                 }
                 catch (Exception error)
                 {
-                    gate.Dispose();
+                    admission.Stop();
                     status.Set("error", "IPv4 trial was stopped: " + error.Message);
                 }
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
@@ -52,12 +56,12 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         finally
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("off", "Experimental WFP rules cleared on service shutdown.");
         }
     }
 
-    void InspectAndApply(ExperimentalWfpForwardGate gate)
+    void InspectAndApply()
     {
         var network = JsonNode.Parse(store.Read())?["Network"] as JsonObject;
         var endText = network?["ExperimentalWfpTrialUntilUtc"]?.GetValue<string>();
@@ -65,7 +69,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             !DateTimeOffset.TryParse(endText, out var end) ||
             end <= DateTimeOffset.UtcNow)
         {
-            if (gate.Active) gate.Dispose();
+            admission.Stop();
             status.Set("off", "WFP test is not active (or its two-minute window has expired).");
             return;
         }
@@ -75,7 +79,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         var accessMode = network?["AccessMode"]?.GetValue<int>() ?? -1;
         if (accessMode is not (0 or 1))
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("invalid-network", "Select a supported downstream AP/hotspot mode.");
             return;
         }
@@ -86,7 +90,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
         var report = GatewayPreflight.Check(wiring, adapters);
         if (!report.WiringAppearsValid)
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("invalid-network", string.Join("; ", report.Issues));
             return;
         }
@@ -98,7 +102,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             string.Equals(n.Id, downstreamId, StringComparison.OrdinalIgnoreCase));
         if (uplink is null || downlink is null)
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("missing-adapter", "Selected network interface has disappeared.");
             return;
         }
@@ -109,7 +113,7 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
             !a.Address.IsIPv6LinkLocal))
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("ipv6-risk", "Downstream has non-link-local IPv6; refusing IPv4-only network test.");
             return;
         }
@@ -121,24 +125,29 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
             discovered.Wan?.InterfaceIndex != upstreamIndex ||
             !discovered.AccessPoints.Any(a => a.InterfaceIndex == downstreamIndex))
         {
-            gate.Dispose();
+            admission.Stop();
             status.Set("route-mismatch", "Windows default internet route or downstream AP does not match selected adapters.");
             return;
         }
 
-        // Exact selected interface pair only. NEVER permit auto-discovery to block
-        // an unrelated private-network interface.
+        // Exact selected interface pair only. Manual field verification is
+        // required before the trial permits code activation.
         var onlySelectedClientAp = discovered.AccessPoints.Single(a => a.InterfaceIndex == downstreamIndex);
-        gate.Apply(new NetworkTopologySnapshot
+        var confirmed = network?["ExperimentalWfpTrialBlockingObserved"]?.GetValue<bool>() == true;
+        admission.Apply(new NetworkTopologySnapshot
         {
             Wan = discovered.Wan,
             AccessPoints = new List<NetworkAdapterSnapshot> { onlySelectedClientAp }
-        }, Array.Empty<IPAddress>());
+        }, end, confirmed);
 
-        status.Set(gate.Active ? "ipv4-block-trial-active" : "wfp-unavailable",
-            gate.Active
-                ? "Experimental WFP IPv4 forwarding deny installed for selected AP->LAN route. " +
-                  "TEST ON A REAL CLIENT. No IPv6 protection or packet verification."
-                : gate.State + " " + gate.LastError, end);
+        var ready = admission.IsEnforcementReady;
+        status.Set(ready ? "ipv4-code-trial-active" : "ipv4-default-deny-trial-active",
+            ready
+                ? "Operator confirmed blocked IPv4 forwarding; temporary per-IP code grants enabled. " +
+                  "NOT production protection; check traffic from the test phone."
+                : "Experimental IPv4 forwarding deny installed for the selected Hotspot. " +
+                  "Verify that an uncoded phone cannot browse externally, then confirm in the admin dialog. " +
+                  "IPv6 and service-stop bypass remain unverified.",
+            end);
     }
 }
