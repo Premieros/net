@@ -1,3 +1,21 @@
+# Phase 1 SQLite integration (work in progress)
+
+The WinForms desktop app and Gateway now use a common `StateStore` based on Microsoft.Data.Sqlite.
+On first initialization, the previous `v9-data.json` is imported into `wifi-state.db` with `v9-data.json.pre-sqlite.bak` as a backup. The original JSON remains untouched. Each mutation uses a database transaction, and each redemption checks the latest usage count inside that transaction. Treat the SQLite file as authoritative after migration; do not keep running older versions of the application against the JSON file.
+
+## Deployment precautions
+- Stop the Windows Gateway service and close the desktop app before first installation/migration. Back up ProgramData/Restaurant WiFi Control.
+- Do not roll back to a prior build without explicit data export/conversion, because the previous JSON version will not reflect new SQLite activity.
+- Build and test Windows release, migration, concurrent redemptions and installer upgrades before merging this branch.
+- SQLite coordination protects logical state, not actual network access. Windows Hotspot traffic interception and traffic accounting are not implemented.
+- HTTP portal and personally identifiable data still need a comprehensive production security review.
+
+## Current limitations
+- The desktop app and gateway still serialize the logical state as a single JSON document inside SQLite; this is an interim foundation, not normalized relational schema.
+- The gateway's in-memory IP throttle resets on restart and needs an operational rate-limit strategy.
+- Running mixed old/new versions concurrently is unsupported.
+- Recovery procedures, database file ACLs, session expiry enforcement and tests remain work to do.
+
 # Phase 1 foundation: Windows Hotspot
 
 ## Completed in this change
