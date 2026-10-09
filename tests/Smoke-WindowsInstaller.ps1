@@ -45,7 +45,39 @@ if (-not ((Get-Content $stopLog -Raw) -match 'SERVICE_NOT_INSTALLED')) {
 Write-Host 'PASS: no existing Gateway service is a valid install condition.'
 
 RunInstaller 'Fresh install'
-RunInstaller 'In-place reinstall / upgrade'
+
+# Regression for the real user Windows 11 crash (Event 1026):
+# old v9-data.json cannot have its DACL changed by LocalSystem.
+# The service must protect SQLite without modifying any legacy JSON ACL.
+$dataDir = Join-Path $env:ProgramData 'Restaurant WiFi Control'
+$legacyJson = Join-Path $dataDir 'v9-data.json'
+if (Test-Path -LiteralPath $legacyJson) {
+    throw 'Unexpected pre-existing v9-data.json on ephemeral CI runner.'
+}
+$jsonContent = '{"LegacyPermissionRegression":true}'
+Set-Content -LiteralPath $legacyJson -Value $jsonContent -Encoding Ascii -NoNewline
+
+function InvokeIcacls([string[]]$parameters) {
+    & "$env:WINDIR\System32\icacls.exe" @parameters | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "icacls failed with exit $LASTEXITCODE" }
+}
+# Preserve Administrator access, allow only reading as SYSTEM, then deny
+# SYSTEM permission to change the legacy file's DACL.
+InvokeIcacls @($legacyJson, '/grant:r', '*S-1-5-18:R', '*S-1-5-32-544:F')
+InvokeIcacls @($legacyJson, '/inheritance:r')
+InvokeIcacls @($legacyJson, '/deny', '*S-1-5-18:WDAC')
+$expectedLegacyHash = (Get-FileHash -LiteralPath $legacyJson -Algorithm SHA256).Hash
+$expectedLegacyAcl = (Get-Acl -LiteralPath $legacyJson).Sddl
+Write-Host 'Legacy JSON test fixture: SYSTEM can read the file but may not change its DACL.'
+
+RunInstaller 'In-place reinstall / upgrade with protected legacy JSON'
+if ((Get-FileHash -LiteralPath $legacyJson -Algorithm SHA256).Hash -ne $expectedLegacyHash) {
+    throw 'Installer or service altered historical v9-data.json contents.'
+}
+if ((Get-Acl -LiteralPath $legacyJson).Sddl -ne $expectedLegacyAcl) {
+    throw 'Installer or service altered the protected legacy JSON file ACL.'
+}
+Write-Host 'PASS: protected legacy JSON contents and ACL remain untouched after service restart.'
 
 $serviceAfter = Get-Service -Name $serviceName -ErrorAction Stop
 if ($serviceAfter.Status -ne 'Running') { throw 'Gateway not running after upgrade.' }
