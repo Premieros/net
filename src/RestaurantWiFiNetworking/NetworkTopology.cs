@@ -1,52 +1,93 @@
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
+
 namespace RestaurantWiFiNetworking;
 
-public enum AccessPointOrigin
+/// <summary>
+/// Internet ALWAYS enters the Windows PC from an upstream router.
+/// Client connectivity leaves the PC through either a Windows-hosted Wi-Fi hotspot
+/// or a separate access point in bridge (AP) mode.
+/// </summary>
+public enum ClientAccessMode
 {
-    WindowsComputer,
-    ExternalAccessPoint
-}
-
-public enum InternetGateway
-{
-    WindowsComputer,
-    Router
+    WindowsHostedHotspot,
+    ExternalAccessPointBridge
 }
 
 public enum EnforcementBackend
 {
-    WindowsPacketFilter,
-    RouterIntegration
+    WindowsPacketFilter
 }
 
-public sealed record AccessPointTopology(
-    AccessPointOrigin AccessPoint,
-    InternetGateway Gateway,
-    bool WindowsForwardsClientTraffic,
-    bool RouterHasSupportedIntegration);
+/// <param name="UpstreamAdapterId">Windows NIC connected to the internet-supplying router.</param>
+/// <param name="DownstreamAdapterId">Different NIC that leads to clients (AP or hotspot).</param>
+/// <param name="ClientsUseWindowsAsGateway">
+/// Expected client default gateway points at the Windows PC, not directly at the upstream router.
+/// This configuration flag is NOT a verified packet-path test.
+/// </param>
+public sealed record WindowsSharingTopology(
+    string UpstreamAdapterId,
+    string DownstreamAdapterId,
+    ClientAccessMode AccessMode,
+    bool ClientsUseWindowsAsGateway);
+
+public sealed record AdapterSnapshot(
+    string Id, string Name, bool IsUp, bool HasIpv4Address, bool HasIpv4DefaultGateway);
 
 public sealed record TopologyAssessment(
     EnforcementBackend Backend,
+    bool ConfigurationConsistent,
     bool NetworkAccessEnforcementReady,
     string Explanation);
 
+public static class WindowsAdapterDiscovery
+{
+    /// <summary>Read-only adapter discovery. Does not enable internet sharing or firewall rules.</summary>
+    public static IReadOnlyList<AdapterSnapshot> Discover() =>
+        NetworkInterface.GetAllNetworkInterfaces()
+            .Select(n =>
+            {
+                var ip = n.GetIPProperties();
+                return new AdapterSnapshot(
+                    n.Id, n.Name,
+                    n.OperationalStatus == OperationalStatus.Up,
+                    ip.UnicastAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork),
+                    ip.GatewayAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !System.Net.IPAddress.Any.Equals(a.Address)));
+            })
+            .ToArray();
+}
+
 public static class TopologyValidator
 {
-    public static TopologyAssessment Assess(AccessPointTopology topology)
+    public static TopologyAssessment Assess(WindowsSharingTopology topology,
+        IEnumerable<AdapterSnapshot> adapters)
     {
-        if (topology.Gateway == InternetGateway.WindowsComputer)
-        {
-            if (!topology.WindowsForwardsClientTraffic)
-                return new(EnforcementBackend.WindowsPacketFilter, false,
-                    "Client traffic does not traverse Windows. A Windows-only policy cannot control this network.");
-            return new(EnforcementBackend.WindowsPacketFilter, false,
-                "Windows gateway topology is possible, but no verified Windows packet filtering provider has been installed.");
-        }
+        TopologyAssessment Invalid(string why) =>
+            new(EnforcementBackend.WindowsPacketFilter, false, false, why);
 
-        if (!topology.RouterHasSupportedIntegration)
-            return new(EnforcementBackend.RouterIntegration, false,
-                "Router is the internet gateway; its hardware/API must support network policy enforcement.");
-        return new(EnforcementBackend.RouterIntegration, false,
-            "Router is a candidate for a policy integration, but a vendor-specific controller must be implemented and tested.");
+        if (string.IsNullOrWhiteSpace(topology.UpstreamAdapterId) ||
+            string.IsNullOrWhiteSpace(topology.DownstreamAdapterId))
+            return Invalid("Select both router-facing (upstream) and client-facing (downstream) Windows adapters.");
+        if (string.Equals(topology.UpstreamAdapterId, topology.DownstreamAdapterId, StringComparison.OrdinalIgnoreCase))
+            return Invalid("Select distinct upstream and downstream adapters. A shared Wi-Fi radio needs an explicitly verified virtual adapter.");
+        var available = adapters.ToArray();
+        var upstream = available.FirstOrDefault(a =>
+            string.Equals(a.Id, topology.UpstreamAdapterId, StringComparison.OrdinalIgnoreCase));
+        var downstream = available.FirstOrDefault(a =>
+            string.Equals(a.Id, topology.DownstreamAdapterId, StringComparison.OrdinalIgnoreCase));
+        if (upstream is null || downstream is null)
+            return Invalid("One or both configured Windows network adapters were not found.");
+        if (!upstream.IsUp || !upstream.HasIpv4Address || !upstream.HasIpv4DefaultGateway)
+            return Invalid("Router-facing adapter must be connected with an IPv4 address and a default gateway.");
+        if (!downstream.IsUp || !downstream.HasIpv4Address)
+            return Invalid("Client-facing adapter must be active and have its own IPv4 address.");
+        if (!topology.ClientsUseWindowsAsGateway)
+            return Invalid("Clients must route through the Windows PC; direct router routing bypasses admission control.");
+        return new(EnforcementBackend.WindowsPacketFilter, true, false,
+            "Adapter configuration is plausible for router -> Windows -> AP/hotspot. " +
+            "Routing, NAT/ICS, client gateway and packet filtering remain unverified. " +
+            "No network access control is installed.");
     }
 }
 
@@ -54,21 +95,25 @@ public sealed record ClientIdentity(string IpAddress, string? HardwareAddress = 
 public sealed record AdmissionResult(bool Enforced, string Reason);
 
 /// <summary>
-/// Enforced=true is valid only when an actual network gateway confirms a deny/allow rule.
-/// Recording a database session never counts as enforcement.
+/// A network grant only succeeds if the Windows gateway truly enforces it.
+/// Creating a session row in SQLite does not grant internet access.
 /// </summary>
 public interface INetworkAdmissionController
 {
-    ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt, CancellationToken token = default);
-    ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client, CancellationToken token = default);
+    ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt,
+        CancellationToken token = default);
+    ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default);
 }
 
-/// <summary>Explicit safe placeholder: never reports a network grant as successful.</summary>
+/// <summary>Explicit safe placeholder until a packet filter is installed and tested.</summary>
 public sealed class UnconfiguredAdmissionController : INetworkAdmissionController
 {
-    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt, CancellationToken token = default) =>
-        ValueTask.FromResult(new AdmissionResult(false, "Network enforcement provider has not been configured."));
+    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt,
+        CancellationToken token = default) =>
+        ValueTask.FromResult(new AdmissionResult(false, "Windows gateway admission control is not configured."));
 
-    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client, CancellationToken token = default) =>
-        ValueTask.FromResult(new AdmissionResult(false, "No active enforcement provider is installed."));
+    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default) =>
+        ValueTask.FromResult(new AdmissionResult(false, "No verified network filter is installed."));
 }
