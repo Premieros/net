@@ -1,4 +1,5 @@
 using RestaurantWiFiNetworking;
+using RestaurantWiFiStorage;
 
 namespace RestaurantWiFiControl;
 
@@ -93,11 +94,14 @@ internal sealed class NetworkSetupDialog : Form
         };
         var tryBlock = new Button { Text = "اختبار حجب IPv4 لمدة دقيقتين", Width = 275, Height = 35 };
         var stopBlock = new Button { Text = "إيقاف اختبار الحجب", Width = 185, Height = 35 };
+        var verifyBlock = new Button { Text = "تأكيد الحجب من الهاتف", Width = 220, Height = 35 };
         trialActions.Controls.Add(tryBlock);
         trialActions.Controls.Add(stopBlock);
+        trialActions.Controls.Add(verifyBlock);
         root.Controls.Add(trialActions, 0, 6);
         tryBlock.Click += (_, _) => UpdateTrial(true);
         stopBlock.Click += (_, _) => UpdateTrial(false);
+        verifyBlock.Click += (_, _) => ConfirmObservedBlock();
         scan.Click += (_, _) => Scan();
         inspect.Click += (_, _) => Report();
         save.Click += (_, _) => SaveSelection();
@@ -197,6 +201,33 @@ internal sealed class NetworkSetupDialog : Form
                           (safety.Issues.Count == 0 ? "" : "\r\nمشكلات مكتشفة:\r\n- " +
                               string.Join("\r\n- ", safety.Issues)) + "\r\n\r\n" +
                           "تنبيه: لم يتم التأكد من NAT/DHCP أو بوابة العملاء أو فرض حجب الإنترنت.";
+    }
+
+    void ConfirmObservedBlock()
+    {
+        if (MessageBox.Show(
+            "اختبار عملي على هاتف اختبار فقط:\n" +
+            "1. أوقف بيانات الهاتف المحمولة وأبقِه على Hotspot.\n" +
+            "2. تأكد أنه لا يفتح موقع IPv4 خارجي دون كود.\n" +
+            "3. تأكد أن http://192.168.137.1:8088/ ما زالت تفتح.\n\n" +
+            "هل تحققت بنفسك من الحجب؟ تأكيدك يُتيح اختبار كود مدفوع الاستخدام لمرة واحدة " +
+            "ضمن المدة المتبقية من اختبار الدقيقتين. لا تستخدم أكواد العملاء الحقيقية. " +
+            "هذا ليس حماية إنتاجية؛ بعد انتهاء الاختبار يعود الإنترنت لجميع الأجهزة.",
+            "تحقق فعلي من حجب IPv4", MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        try
+        {
+            AdminPipeClient.Send(new AdminRequest("confirm_wfp_trial_block_observed"));
+            MessageBox.Show("تم تسجيل تأكيدك. انتظر ثانيتين ثم استخدم كود اختبار من الهاتف. " +
+                "ستُستهلك محاولة واحدة من الكود إذا نجح منح الاتصال. " +
+                "لن يضمن هذا الاختبار الحجب بعد إيقاف خدمة Windows.",
+                "اختبار السماح المؤقت", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("لم يتم تأكيد الاختبار: " + ex.Message,
+                "بوابة الاختبار غير جاهزة", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     void UpdateTrial(bool enable)
