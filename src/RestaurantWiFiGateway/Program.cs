@@ -4,10 +4,12 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
 using RestaurantWiFiStorage;
+using RestaurantWiFiGateway;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
 builder.Services.AddHostedService<GatewayWorker>();
+builder.Services.AddHostedService<AdminPipeWorker>();
 await builder.Build().RunAsync();
 
 sealed class GatewayWorker : BackgroundService
