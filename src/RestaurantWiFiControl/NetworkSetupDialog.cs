@@ -52,11 +52,11 @@ internal sealed class NetworkSetupDialog : Form
 
         root.Controls.Add(new Label
         {
-            Text = "الراوتر يرسل الإنترنت إلى كابل Ethernet بالكمبيوتر. " +
+            Text = "الراوتر يرسل الإنترنت للكمبيوتر عبر كابل LAN أو Wi-Fi. " +
                    "ثم يخرج الكمبيوتر الإنترنت إلى Access Point خارجي أو Hotspot.",
             Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight
         }, 0, 0);
-        root.Controls.Add(Field("مدخل الإنترنت — كابل LAN من الراوتر", upstream), 0, 1);
+        root.Controls.Add(Field("مدخل الإنترنت — Wi-Fi أو LAN من الراوتر", upstream), 0, 1);
         root.Controls.Add(Field("طريقة توزيع الإنترنت", mode), 0, 2);
         root.Controls.Add(Field("مخرج الإنترنت — كارت مختلف للعملاء", downstream), 0, 3);
         root.Controls.Add(diagnostic, 0, 4);
@@ -177,8 +177,8 @@ internal sealed class NetworkSetupDialog : Form
         var downlink = (downstream.SelectedItem as AdapterChoice)?.Adapter;
         if (uplink is null || downlink is null)
         {
-            diagnostic.Text = osText + "اختر كارت Ethernet الذي يصله الراوتر وكارتًا مختلفًا لتوزيع الإنترنت.\r\n" +
-                              "قد لا يظهر كارت Hotspot الافتراضي حتى يتم تشغيله من Windows.";
+            diagnostic.Text = osText + "اختر كارت Wi-Fi أو Ethernet الذي يستقبل الإنترنت وكارتًا مختلفًا لتوزيعه.\r\n" +
+                              "قد لا يظهر كارت Hotspot الافتراضي حتى تشغيله من Windows؛ يجب اختيار واجهة مختلفة عن المدخل.";
             return;
         }
         var topology = new WindowsSharingTopology(
@@ -203,9 +203,22 @@ internal sealed class NetworkSetupDialog : Form
     {
         var uplink = (upstream.SelectedItem as AdapterChoice)?.Adapter;
         var downlink = (downstream.SelectedItem as AdapterChoice)?.Adapter;
+        if (!enable)
+        {
+            Storage.SetNetwork(new NetworkPreferences
+            {
+                UpstreamAdapterId = (uplink?.Id ?? original.UpstreamAdapterId),
+                DownstreamAdapterId = (downlink?.Id ?? original.DownstreamAdapterId),
+                AccessMode = mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
+                    ClientAccessMode.ExternalAccessPointBridge,
+                ExperimentalWfpTrialUntilUtc = ""
+            });
+            MessageBox.Show("تم إرسال طلب إيقاف اختبار الحجب. تحقق من حالة Gateway.", "اختبار الشبكة");
+            return;
+        }
         if (uplink is null || downlink is null)
         {
-            MessageBox.Show("اختر كرت LAN من الراوتر وكرت توزيع الإنترنت أولاً.", "اختبار الشبكة");
+            MessageBox.Show("اختر كرت Wi-Fi أو LAN المتصل بالراوتر وكرت توزيع الإنترنت أولاً.", "اختبار الشبكة");
             return;
         }
         var selected = new WindowsSharingTopology(
@@ -223,7 +236,8 @@ internal sealed class NetworkSetupDialog : Form
                 "تجربة متقدمة على شبكة اختبار معزولة فقط.\n" +
                 "قد يتوقف الإنترنت عن أجهزة الـAP/Hotspot لمدة دقيقتين، " +
                 "ولا تضمن هذه التجربة منع IPv6 أو عمل الأكواد.\n" +
-                "لن نقوم بتغيير إعدادات NAT/ICS. اختبر من هاتف منفصل. هل تتابع؟",
+                "لن نقوم بتغيير إعدادات NAT/ICS. اختبر من هاتف منفصل. " +
+                "عند استخدام Wi-Fi للإنترنت وHotspot من كارت واحد، يجب ظهور واجهتين مختلفتين. هل تتابع؟",
                 "تأكيد تجربة WFP المؤقتة", MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
