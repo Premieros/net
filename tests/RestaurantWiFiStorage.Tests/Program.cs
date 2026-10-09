@@ -200,6 +200,27 @@ try
     Check(codesAfter.Count == 1 && codesAfter[0]!["Uses"]!.GetValue<int>() == 1,
         "Denied attempts do not change the committed usage count");
 
+    var concurrentCode = new JsonObject
+    {
+        ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
+        ["Code"] = "654321", ["MaxUses"] = 1, ["Uses"] = 0, ["Enabled"] = true
+    };
+    AdminStateCommands.Execute(adminStore, new AdminRequest("add_codes", new JsonObject
+    {
+        ["GroupId"] = groupId, ["Codes"] = new JsonArray(concurrentCode)
+    }));
+    var concurrentAdmission = new FakeAdmissionController(true);
+    var concurrentRedemptions = await Task.WhenAll(Enumerable.Range(0, 24).Select(i =>
+        Task.Run(async () => await new AccessRedemptionService(adminStore, concurrentAdmission)
+            .RedeemAsync(new RedemptionRequest("Guest", (200000000 + i).ToString(),
+                "654321", $"192.0.2.{20 + i}", "device")))));
+    Check(concurrentRedemptions.Count(x => x.Success) == 1,
+        "24 concurrent attempts redeem a one-use code at most once after network admission");
+    var concurrencyState = JsonNode.Parse(adminStore.Read())!.AsObject();
+    Check(concurrencyState["Codes"]!.AsArray().OfType<JsonObject>()
+        .Single(c => c["Code"]!.GetValue<string>() == "654321")["Uses"]!.GetValue<int>() == 1,
+        "Parallel redemption commits exactly one use and keeps database consistent");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
