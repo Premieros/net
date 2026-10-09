@@ -209,9 +209,9 @@ internal sealed class PasswordDialog : Form
     {
         if (_setup)
         {
-            if (_password.Text.Length < 4)
+            if (_password.Text.Length < 12)
             {
-                MessageBox.Show("كلمة المرور يجب ألا تقل عن 4 أحرف.", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("كلمة المرور يجب ألا تقل عن 12 حرفاً.", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             if (_password.Text != _confirm.Text)
