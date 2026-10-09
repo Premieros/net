@@ -1,3 +1,18 @@
+# Session revocation reconciliation
+
+The session expiry process now distinguishes logical expiration from physical network rule removal.
+If a session is marked `network-authorized` and its time expires, the service records
+`revocation-required` **without** reporting the client disconnected. A periodic reconciliation
+task requests actual rule removal from `INetworkAdmissionController`; only a confirmed revoke
+transitions it to `expired` / `Connected=false`. An unavailable backend leaves the case flagged
+for review rather than silently indicating safety. Mock admission/revocation tests cover this.
+
+An unconfigured Windows network controller remains the deployed default, so no physical packet
+access is granted or revoked yet. Real Windows forwarding, packet filtering, usage metering and
+rate limiting still need implementation and on-device verification.
+
+---
+
 # Next networking foundation batch — network preflight and transactional authorization
 
 - The Windows administration dialog now reports IPv4 subnet/prefix information, warns if
