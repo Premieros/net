@@ -320,10 +320,16 @@ internal sealed class MainForm : Form
         try
         {
             var status = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
-            _gatewayStatus.Text = status.Contains("portal-ready", StringComparison.OrdinalIgnoreCase)
-                ? "Gateway Service: البوابة تعمل — صلاحيات الإنترنت قيد التطوير"
-                : "Gateway Service: متصل";
-            _gatewayStatus.ForeColor = Color.SeaGreen;
+            using var snapshot = JsonDocument.Parse(status);
+            var trialState = snapshot.RootElement.TryGetProperty("experimentalWfp", out var experimental) &&
+                experimental.TryGetProperty("State", out var stateValue) ? stateValue.GetString() : "off";
+            _gatewayStatus.Text = trialState == "ipv4-block-trial-active"
+                ? "WFP تجريبي: حجب IPv4 يعمل مؤقتًا — افحص من هاتف"
+                : trialState is "error" or "invalid-network" or "route-mismatch" or "ipv6-risk"
+                    ? "WFP تجريبي: فشل فحص الشبكة — راجع التوصيل"
+                    : "Gateway: البوابة جاهزة — تفعيل الإنترنت بالأكواد غير متاح";
+            _gatewayStatus.ForeColor = trialState == "ipv4-block-trial-active" ?
+                Color.DarkOrange : trialState == "off" ? Color.DarkOrange : Color.DarkRed;
             Storage.Reload();
             RefreshAll();
         }
