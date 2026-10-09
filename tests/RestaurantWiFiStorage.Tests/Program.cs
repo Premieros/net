@@ -101,6 +101,47 @@ try
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
 
+    // Privileged state operations execute a fixed whitelist under SQLite transactions.
+    var adminDirectory = Path.Combine(dir, "admin-commands");
+    var adminStore = new StateStore(adminDirectory);
+    Check(AdminStateCommands.Execute(adminStore, new AdminRequest("initialize")).Success,
+        "Privileged service initializes default groups");
+    var adminSnapshot = JsonNode.Parse(AdminStateCommands.Execute(adminStore,
+        new AdminRequest("read")).Data!)!.AsObject();
+    Check(adminSnapshot["Groups"]!.AsArray().Count == 3, "Default groups initialized over admin commands");
+    var groupId = Guid.NewGuid().ToString();
+    var groupNode = new JsonObject
+    {
+        ["Id"] = groupId, ["Name"] = "Special", ["Kind"] = "customer", ["Minutes"] = 30,
+        ["QuotaMb"] = 1024, ["DownloadMbps"] = 3.0m, ["UploadMbps"] = 2.0m,
+        ["MaxDevices"] = 1, ["MaxUsesPerDevice"] = 1, ["Enabled"] = true
+    };
+    Check(AdminStateCommands.Execute(adminStore, new AdminRequest("add_group",
+        new JsonObject { ["Group"] = groupNode.DeepClone() })).Success,
+        "Service can add an approved group");
+    var submittedCode = new JsonObject
+    {
+        ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
+        ["Code"] = "123456", ["MaxUses"] = 1, ["Uses"] = 0, ["Enabled"] = true
+    };
+    var codeRequest = new AdminRequest("add_codes", new JsonObject
+    {
+        ["GroupId"] = groupId, ["Codes"] = new JsonArray(submittedCode.DeepClone())
+    });
+    Check(AdminStateCommands.Execute(adminStore, codeRequest).Success,
+        "Service can add a code to an enabled group");
+    bool duplicateRejected = false;
+    try { AdminStateCommands.Execute(adminStore, codeRequest); }
+    catch (ArgumentException) { duplicateRejected = true; }
+    Check(duplicateRejected, "Service rejects duplicate code without committing changes");
+    bool replacementRejected = false;
+    try { AdminStateCommands.Execute(adminStore, new AdminRequest("replace_all",
+        new JsonObject { ["RestaurantName"] = "Attacker" })); }
+    catch (ArgumentException) { replacementRejected = true; }
+    Check(replacementRejected, "Arbitrary full-state replacement command is forbidden");
+    var currentAdmin = JsonNode.Parse(adminStore.Read())!;
+    Check(currentAdmin["Codes"]!.AsArray().Count == 1 && currentAdmin["RestaurantName"] is null,
+        "Rejected administrative operations leave prior data intact");
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
