@@ -29,6 +29,8 @@ RestartApplications=no
 [Files]
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "gateway\*"; DestDir: "{app}\Gateway"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Embedded for pre-copy service stop; no scripts are installed in Program Files.
+Source: "StopGatewayForInstall.ps1"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\Restaurant WiFi Control"; Filename: "{app}\{#MyAppExeName}"
@@ -81,6 +83,7 @@ var
   ResultCode: Integer;
   Parameters: String;
   QuerySucceeded: Boolean;
+  StopError: AnsiString;
 begin
   if CurStep <> ssInstall then
     Exit;
@@ -114,23 +117,24 @@ begin
       mbError, MB_RETRYCANCEL) <> IDRETRY then Abort;
   end;
 
-  { Stop the existing service before overwriting locked files.
-    Initial installations with no service are safe to proceed. }
-  Parameters := '-NoProfile -NonInteractive -Command "' +
-    '$ErrorActionPreference = ''Stop''; ' +
-    '$s = Get-Service -Name ''RestaurantWiFiGateway'' -ErrorAction SilentlyContinue; ' +
-    'if ($null -ne $s -and $s.Status -ne ''Stopped'') { ' +
-    'Stop-Service -Name ''RestaurantWiFiGateway'' -Force; ' +
-    '$s.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)); ' +
-    'if ($s.Status -ne ''Stopped'') { exit 1 } }"';
+  { Use a testable helper instead of fragile nested PowerShell -Command quotes.
+    It MUST succeed when the service is not installed (first/partial install).
+    It also succeeds when already stopped and waits for a running service to stop. }
+  ExtractTemporaryFile('StopGatewayForInstall.ps1');
+  Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
+    ExpandConstant('{tmp}\StopGatewayForInstall.ps1') +
+    '" -LogPath "' + ExpandConstant('{tmp}\gateway-stop.log') + '"';
 
   if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
        Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
-    MsgBox('Cannot stop the existing Restaurant WiFi Gateway service. ' +
-      'The installer will not overwrite running service files. ' +
-      'Close the application and retry as administrator.',
+    if not LoadStringFromFile(ExpandConstant('{tmp}\gateway-stop.log'), StopError) then
+      StopError := 'No service-stop diagnostic log available.';
+    MsgBox('Could not safely stop the existing Gateway service.' + #13#10 +
+      'Windows exit code: ' + IntToStr(ResultCode) + #13#10 +
+      Copy(StopError, 1, 800) + #13#10 +
+      'Your existing program and database were not deleted.',
       mbError, MB_OK);
     Abort;
   end;
