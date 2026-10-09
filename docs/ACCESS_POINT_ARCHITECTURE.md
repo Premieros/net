@@ -1,56 +1,85 @@
-# Access Point topology (Windows PC or router) — design decision
+# Internet distribution architecture — router -> Windows PC -> access point / hotspot
 
-The product should support **access points** (APs) hosted by a Windows PC or provided by a router / dedicated AP.
-The AP broadcasts Wi-Fi. **The gateway** forwards packets to the internet. These can be different devices.
+## Confirmed requirement
 
-## Supported target topologies
+The **router supplies internet to the Windows computer**. The **computer** is responsible for forwarding
+and eventually controlling internet access for clients. Clients connect by one of two methods.
 
-### A. Windows PC is the internet gateway; PC provides the AP
+### Mode 1: External access point connected to the computer
+
 ```text
-Internet/Uplink -> Windows PC (gateway / NAT + policy enforcement) -> Windows Wi-Fi AP -> clients
+Internet -> upstream router
+                 |
+        (Ethernet or Wi-Fi)
+                 |
+         Windows computer
+         [NIC A: upstream router]
+         [routing / NAT / policy gateway — to be implemented/verified]
+         [NIC B: downstream LAN]
+                 |
+          Ethernet cable
+                 |
+       Access Point (AP/bridge mode)
+                 |
+          Wi-Fi clients
 ```
-Windows must actually forward the client packets and a verified packet-filtering mechanism must be installed.
-A hosted AP/Windows sharing mode is a transport detail, not sufficient enforcement by itself.
 
-### B. Windows PC is the gateway; external router is an AP (bridge mode)
+The downstream AP is **not directly connected to the upstream router**.
+The AP must operate in bridge/AP mode (no competing NAT/DHCP server) and client default gateways must
+point to the Windows downstream interface. There must not be a second internet uplink bypassing Windows.
+Windows requires separate *logical* upstream and downstream interfaces, potentially a USB Ethernet adapter
+if the PC lacks a second network port.
+
+### Mode 2: Hotspot emitted by the computer
+
 ```text
-Internet/Uplink -> Windows PC (gateway + policy enforcement) -> Ethernet -> bridged AP -> Wi-Fi clients
+Internet -> upstream router
+                 |
+         Windows computer
+         [NIC A: upstream router]
+         [routing / NAT / policy gateway — to be implemented/verified]
+         [NIC B: Windows-hosted Wi-Fi hotspot]
+                 |
+          Wi-Fi clients
 ```
-The AP must bridge client traffic rather than route around Windows. Configure DHCP and default gateway
-to point at the intended managed path. Treat guest VLAN and IPv6 bypass as explicit test cases.
 
-### C. Router is the gateway and provides/controls the AP
-```text
-Internet -> router (gateway + per-client policy enforcement) -> Wi-Fi clients
-                |
-                +-- Windows management app + Gateway service over secure management interface
-```
-If router is gateway, Windows cannot control its clients' forwarded traffic just because it is on the same LAN.
-Implement a **model-specific router integration**: supported router API, captive portal, RADIUS or vendor policy interface.
-Without a verified enforcement interface, this topology is monitoring/management only, **not access control**.
+A compatible Windows Wi-Fi adapter/driver and an operational Windows sharing method are required.
+Some hardware supports shared physical radios through virtual adapters, but this must be verified on
+the specific Windows version and Wi-Fi hardware.
 
-## Architecture contracts
-- **NetworkTopology:** AP origin, internet gateway, and verified enforcement capability.
-- **Admission policy:** deny by default until an enforcement provider explicitly confirms access.
-- **WindowsGatewayController:** planned packet-path/WFP implementation; Windows versions and NICs need bench tests.
-- **RouterController:** planned vendor-specific integrations. A generic home router is not assumed controllable.
-- **Session store:** accepted codes and logical sessions are not proof that a device can reach the internet.
-- **Metering / shaping / expiry:** must be performed by the effective gateway, not by the AP icon in the UI.
+## What the program needs to manage
 
-## Configuration and security
-Discover network adapters, client subnet, internet gateway, DHCP, DNS and AP mode at setup.
-Before enabling portal mode confirm that the access point network cannot bypass the selected enforcement gateway.
-Keep management API separate from untrusted clients. Use a secure local privileged service for state writes,
-plus authenticated management transport to an external router when applicable.
+- **Upstream NIC:** detects the interface receiving internet and its router gateway.
+- **Downstream NIC:** detects the separate client-facing interface (Ethernet AP or Wi-Fi hotspot).
+- **Connectivity routing:** check that clients actually use Windows as their internet gateway, that
+  Windows NAT/forwarding is set up, and that no alternative IPv4/IPv6 paths bypass enforcement.
+- **Captive-portal admission:** unauthenticated clients must not have internet. On valid redemption,
+  a verified Windows packet enforcement component should grant precisely that client session.
+- **Session policy:** disconnect at expiry, revoke on administrator request, account for usage and
+  enforce upload/download limits; packet admission and traffic shaping require a working network layer.
+- **Deployment security:** the Windows service should exclusively own the SQLite database and expose
+  an authenticated, access-controlled local administration interface to WinForms.
 
-## Acceptance tests on physical equipment
-1. Verify the client's actual default gateway and outbound path.
-2. Confirm internet is denied to unauthenticated clients (IPv4/IPv6 and DNS).
-3. Confirm explicit grant, revoke, expiry and quota enforcement work on that path.
-4. Test reconnection, DHCP IP change, MAC randomization, reboot, fallback and two clients reusing one code.
-5. Verify service failure cannot silently permit anonymous internet.
-6. Confirm rate limits independently for upload/download and compare with observed network counters.
+## What is *not* required
 
-## Current status
-Both target AP origins are represented in the architecture. Implementation of **actual network enforcement**
-for either mode is not yet shipped. Windows Forms + HTTP listener + SQLite alone cannot do this.
+A router-specific control API (MikroTik, TP-Link, etc.) is **not** required for this target topology.
+The upstream router just provides ordinary internet. Router policy integration would only be needed
+if the clients' packets bypassed Windows; that is outside the confirmed design.
+
+## First-boot verification
+
+1. Identify **two distinct Windows network interfaces**: router-facing upstream and client-facing downstream.
+2. Confirm the upstream adapter has a working router default gateway.
+3. Confirm that downstream clients obtain IP/DNS/gateway in a separate network served through Windows.
+4. Verify an unauthenticated client's packets cannot bypass the intended enforcement layer, including IPv6.
+5. Validate real client disconnect, allowed sessions, code reuse, time expiration, quotas and bandwidth caps
+   on the actual router, PC adapters, AP and Windows version.
+6. Confirm service failure and reboot do not accidentally leave clients unrestricted.
+
+## Implementation status
+
+A typed topology model, read-only adapter discovery and tests are present in
+`RestaurantWiFiNetworking`. They validate possible wiring but **do not** turn on routing/NAT,
+configure Windows sharing, create a captive portal, firewall rules or bandwidth shaping.
+The current HTTP portal stores logical code redemptions; the real network admission backend
+and real-hardware testing are still required.
