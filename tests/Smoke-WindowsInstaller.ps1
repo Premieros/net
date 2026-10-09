@@ -46,6 +46,21 @@ Write-Host 'PASS: no existing Gateway service is a valid install condition.'
 
 RunInstaller 'Fresh install'
 
+# TEST RUNNER ONLY: force the exact migration path from user hardware.
+# This disposable Windows VM has no customer data; NEVER do this on a user PC.
+Stop-Service -Name $serviceName -Force -ErrorAction Stop
+$svcStopped = Get-Service -Name $serviceName
+$svcStopped.WaitForStatus(
+    [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+    [TimeSpan]::FromSeconds(25))
+foreach ($file in @('wifi-state.db', 'wifi-state.db-wal', 'wifi-state.db-shm',
+                    'wifi-state.db-journal', 'v9-data.import.json',
+                    'v9-data.json.pre-sqlite.bak')) {
+    $target = Join-Path (Join-Path $env:ProgramData 'Restaurant WiFi Control') $file
+    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+}
+Write-Host 'Disposable CI database cleared solely to validate protected legacy JSON migration.'
+
 # Regression for the real user Windows 11 crash (Event 1026):
 # old v9-data.json cannot have its DACL changed by LocalSystem.
 # The service must protect SQLite without modifying any legacy JSON ACL.
@@ -65,12 +80,40 @@ function InvokeIcacls([string[]]$parameters) {
 # SYSTEM permission to change the legacy file's DACL.
 InvokeIcacls -parameters @($legacyJson, '/grant:r', '*S-1-5-18:R', '*S-1-5-32-544:F')
 InvokeIcacls -parameters @($legacyJson, '/inheritance:r')
-InvokeIcacls -parameters @($legacyJson, '/deny', '*S-1-5-18:(WDAC)')
+InvokeIcacls -parameters @($legacyJson, '/deny', '*S-1-5-18:(R,WDAC)')
 $expectedLegacyHash = (Get-FileHash -LiteralPath $legacyJson -Algorithm SHA256).Hash
 $expectedLegacyAcl = (Get-Acl -LiteralPath $legacyJson).Sddl
-Write-Host 'Legacy JSON test fixture: SYSTEM can read the file but may not change its DACL.'
+Write-Host 'Legacy JSON test fixture: SYSTEM cannot read the original or edit its DACL.'
 
 RunInstaller 'In-place reinstall / upgrade with protected legacy JSON'
+$staged = Join-Path $dataDir 'v9-data.import.json'
+if (-not (Test-Path -LiteralPath $staged)) {
+    throw 'Elevated installer did not stage SYSTEM-readable legacy JSON.'
+}
+if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ne $expectedLegacyHash) {
+    throw 'Protected staging copy differs from original legacy JSON.'
+}
+
+# Test the service successfully imported the protected JSON into SQLite.
+$adminPipe = [System.IO.Pipes.NamedPipeClientStream]::new(
+    '.', 'RestaurantWiFiControlAdmin', [System.IO.Pipes.PipeDirection]::InOut)
+try {
+    $adminPipe.Connect(2500)
+    $writer = [System.IO.BinaryWriter]::new($adminPipe)
+    $reader = [System.IO.BinaryReader]::new($adminPipe)
+    $payload = [System.Text.Encoding]::UTF8.GetBytes('{"Operation":"read"}')
+    $writer.Write([int]$payload.Length)
+    $writer.Write([byte[]]$payload)
+    $writer.Flush()
+    $size = $reader.ReadInt32()
+    if ($size -lt 1 -or $size -gt 8388608) { throw 'Invalid IPC response size.' }
+    $answer = [System.Text.Encoding]::UTF8.GetString($reader.ReadBytes($size)) | ConvertFrom-Json
+    if (-not $answer.Success -or -not (($answer.Data | ConvertFrom-Json).LegacyPermissionRegression)) {
+        throw 'SQLite state did not contain the protected legacy records.'
+    }
+} finally { $adminPipe.Dispose() }
+Write-Host 'PASS: Gateway imported legacy JSON denied to SYSTEM into SQLite without data loss.'
+
 if ((Get-FileHash -LiteralPath $legacyJson -Algorithm SHA256).Hash -ne $expectedLegacyHash) {
     throw 'Installer or service altered historical v9-data.json contents.'
 }
