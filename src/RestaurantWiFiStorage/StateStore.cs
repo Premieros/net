@@ -63,27 +63,29 @@ public sealed class StateStore
         {
             // If migration fails, the original file remains untouched.
             string json = "{}";
-            if (File.Exists(legacyPath))
+            var originalLegacyVisible = File.Exists(legacyPath);
+            var secureStageVisible = File.Exists(stagedLegacyPath);
+            if (originalLegacyVisible || secureStageVisible)
             {
-                // The legacy application may have created this file with a DACL
-                // that excludes LocalSystem. The *elevated installer* may stage
-                // a byte-for-byte copy with a protected SYSTEM-readable ACL.
-                // Never silently insert {} or discard legacy data on denied access.
-                var importPath = legacyPath;
+                // A deliberately SYSTEM-unreadable original may appear absent to
+                // File.Exists, so a secure copy prepared by the installer is also
+                // a valid migration source. No existing legacy records are dropped.
+                var importPath = originalLegacyVisible ? legacyPath : stagedLegacyPath;
                 try
                 {
-                    json = File.ReadAllText(legacyPath);
+                    json = File.ReadAllText(importPath);
                 }
-                catch (UnauthorizedAccessException ex)
+                catch (UnauthorizedAccessException ex) when (importPath == legacyPath)
                 {
-                    if (!File.Exists(stagedLegacyPath))
+                    if (!secureStageVisible)
                         throw new InvalidDataException(
-                            "Legacy v9-data.json cannot be read by the Gateway service. " +
-                            "Install the latest version as Administrator to stage a protected " +
-                            "migration copy; the original file remains untouched.", ex);
+                            "Legacy v9-data.json is protected against LocalSystem read. " +
+                            "Run the elevated installer to prepare a secure import copy. " +
+                            "The original remains untouched.", ex);
                     importPath = stagedLegacyPath;
-                    json = File.ReadAllText(stagedLegacyPath);
+                    json = File.ReadAllText(importPath);
                 }
+
                 _ = JsonNode.Parse(json)?.AsObject() ??
                     throw new InvalidDataException("Legacy JSON must be an object.");
                 var backup = legacyPath + ".pre-sqlite.bak";
