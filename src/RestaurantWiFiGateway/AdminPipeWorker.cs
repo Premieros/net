@@ -4,6 +4,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using RestaurantWiFiStorage;
 
 namespace RestaurantWiFiGateway;
@@ -16,6 +17,12 @@ internal sealed class AdminPipeWorker : BackgroundService
 {
     readonly StateStore store = new();
     readonly SemaphoreSlim clients = new(8, 8);
+    readonly ILogger<AdminPipeWorker> logger;
+
+    public AdminPipeWorker(ILogger<AdminPipeWorker> logger)
+    {
+        this.logger = logger;
+    }
 
     static PipeSecurity CreateSecurity()
     {
@@ -61,7 +68,7 @@ internal sealed class AdminPipeWorker : BackgroundService
             {
                 pipe?.Dispose();
                 clients.Release();
-                Console.Error.WriteLine("Local administration pipe error: " + ex.Message);
+                logger.LogError(ex, "Local administration named pipe could not accept connections.");
                 await Task.Delay(1000, stoppingToken);
             }
         }
@@ -105,7 +112,7 @@ internal sealed class AdminPipeWorker : BackgroundService
             UnauthorizedAccessException or JsonException or InvalidOperationException or
             OperationCanceledException)
         {
-            Console.Error.WriteLine("Rejected local admin request: " + ex.GetType().Name);
+            logger.LogWarning(ex, "Rejected or incomplete local administrative request.");
         }
     }
 
