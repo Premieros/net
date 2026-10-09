@@ -96,8 +96,8 @@ begin
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if not QuerySucceeded then
     begin
-      MsgBox('Could not verify whether Restaurant WiFi Control is running.' +
-        #13#10 + 'Installation cannot safely overwrite the app executable.',
+      MsgBox('Could not verify whether Restaurant WiFi Control is running.' + #13#10 +
+        'Installation cannot safely overwrite the app executable.',
         mbError, MB_OK);
       Abort;
     end;
@@ -108,9 +108,9 @@ begin
         IntToStr(ResultCode), mbError, MB_OK);
       Abort;
     end;
-    if MsgBox('Restaurant WiFi Control is still running, possibly in the background.' +
-      #13#10 + 'Close every instance using Task Manager and then click Retry.' +
-      #13#10 + 'Choose Cancel to leave the existing installation unchanged.',
+    if MsgBox('Restaurant WiFi Control is still running, possibly in the background.' + #13#10 +
+      'Close every instance using Task Manager and then click Retry.' + #13#10 +
+      'Choose Cancel to leave the existing installation unchanged.',
       mbError, MB_RETRYCANCEL) <> IDRETRY then Abort;
   end;
 
