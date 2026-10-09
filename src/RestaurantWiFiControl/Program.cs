@@ -343,13 +343,16 @@ internal sealed class MainForm : Form
             using var snapshot = JsonDocument.Parse(status);
             var trialState = snapshot.RootElement.TryGetProperty("experimentalWfp", out var experimental) &&
                 experimental.TryGetProperty("State", out var stateValue) ? stateValue.GetString() : "off";
-            _gatewayStatus.Text = trialState == "ipv4-block-trial-active"
-                ? "WFP تجريبي: حجب IPv4 يعمل مؤقتًا — افحص من هاتف"
-                : trialState is "error" or "invalid-network" or "route-mismatch" or "ipv6-risk"
-                    ? "WFP تجريبي: فشل فحص الشبكة — راجع التوصيل"
-                    : "Gateway: البوابة جاهزة — تفعيل الإنترنت بالأكواد غير متاح";
-            _gatewayStatus.ForeColor = trialState == "ipv4-block-trial-active" ?
-                Color.DarkOrange : trialState == "off" ? Color.DarkOrange : Color.DarkRed;
+            _gatewayStatus.Text = trialState switch
+            {
+                "ipv4-default-deny-trial-active" => "اختبار WFP: تحقق من حجب IPv4 على الهاتف أولاً",
+                "ipv4-code-trial-active" => "اختبار WFP: أكواد IPv4 متاحة مؤقتًا فقط",
+                "error" or "invalid-network" or "route-mismatch" or "ipv6-risk" =>
+                    "اختبار WFP: فشل فحص الشبكة — راجع التوصيل",
+                _ => "Gateway: البوابة جاهزة — تفعيل الأكواد للإنتاج غير متاح"
+            };
+            _gatewayStatus.ForeColor = trialState is "ipv4-default-deny-trial-active" or
+                "ipv4-code-trial-active" or "off" ? Color.DarkOrange : Color.DarkRed;
             Storage.Reload();
             RefreshAll();
         }
@@ -365,7 +368,7 @@ internal sealed class MainForm : Form
         var sidebar = new Panel { Dock = DockStyle.Right, Width = 235, BackColor = Color.FromArgb(17, 24, 39) };
         var brand = new Label
         {
-            Text = "Wi-Fi Control\nV9.1 Native Windows",
+            Text = "Wi-Fi Control\nV9.3 IPv4 Beta",
             Dock = DockStyle.Top,
             Height = 95,
             ForeColor = Color.White,
