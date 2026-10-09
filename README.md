@@ -23,7 +23,7 @@ does not yet intercept/deny internet packets, enable NAT/ICS, disconnect clients
 apply per-client speed limits. Do **not** use as a secure captive portal until a verified Windows
 network admission backend exists and is tested against the actual hardware.
 
-## Wired router uplink setup (LAN cable)
+## Wired router uplink setup (LAN cable, alternative to Wi-Fi test)
 
 1. Plug the internet-providing router into the PC's Ethernet port.
 2. For an external access point, connect a **second** PC Ethernet port (USB-to-Ethernet is acceptable) to the AP in bridge/AP mode. Alternatively, use a Windows Wi-Fi adapter for the PC-hosted hotspot.
@@ -32,6 +32,34 @@ network admission backend exists and is tested against the actual hardware.
 5. Saving this selection is **diagnostic and configuration only**: it does not enable Internet Connection Sharing, NAT, DHCP, firewall enforcement, captive portal interception, bandwidth shaping or quota enforcement.
 
 The Windows networking backend must still be implemented and verified before using this app to restrict customer internet access.
+
+## V9.2 beta hardware test: router Wi-Fi -> PC -> AP/hotspot
+
+The test PC can receive its internet **over Wi-Fi from the router**; Ethernet upstream is
+also supported. On the test PC, choose the real internet-receiving adapter from
+**الإعدادات → توصيل الشبكة**. The downstream must be a **different logical network
+adapter** with an isolated IPv4 subnet:
+
+- **Wi-Fi in + Ethernet out:** connect a separate PC Ethernet/USB-Ethernet port to an
+  external access point configured in bridge/AP mode.
+- **Wi-Fi in + PC-hosted Wi-Fi hotspot out:** Windows must expose a distinct, working
+  virtual downstream hotspot adapter. A single adapter ID cannot be used on both sides;
+  not every Wi-Fi radio/driver supports simultaneous station + hotspot.
+- **Ethernet in:** remains supported for the final target network.
+
+This **beta** includes a manual, short-lived experimental Windows Filtering Platform
+**IPv4 forwarding block test** imported from the older V10 prototype. It is **OFF by
+default**. After configuring and verifying isolated test NICs, select the explicit
+two-minute block test in Network Settings; use **إيقاف اختبار الحجب** to end it early.
+The temporary block should be tested from a separate client device, not the host PC.
+The service reports trial status locally at `http://127.0.0.1:8765/status/`.
+It is neither an internet-sharing feature nor a working code-admission backend.
+
+**Safety boundaries:** WFP behavior has not been verified on the target Windows hardware.
+The prototype covers IPv4 forwarding only; it neither guarantees IPv6 blocking nor
+survives service termination as a protective block. The app does not configure ICS/NAT,
+meter traffic or enforce speed and quotas. Do not use this beta to sell Wi-Fi access,
+and do not test by interrupting a production network.
 
 ## Supported Windows targets
 
