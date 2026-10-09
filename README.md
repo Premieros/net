@@ -33,6 +33,14 @@ network admission backend exists and is tested against the actual hardware.
 
 The Windows networking backend must still be implemented and verified before using this app to restrict customer internet access.
 
+## Supported Windows targets
+
+- **Windows 11:** a supported, fully updated Windows 11 release on compatible hardware is the preferred production target.
+- **Windows 10:** the app recognizes Windows 10 build 19045 (22H2 era); normal Windows 10 support ended on October 14, 2025. Use Windows 10 only if the installation has an applicable security servicing arrangement (such as ESU or LTSC, where eligible). Earlier builds are flagged for upgrade.
+- The network setup screen now displays the detected OS/build and Ethernet adapter diagnostics. The OS check is not a test of Windows Internet Connection Sharing (ICS), NAT, hotspot features or packet filtering.
+- Both OS families still require full physical tests with **router Ethernet LAN -> PC -> bridged access point or hosted hotspot**.
+- No physical deny/allow, quotas or shaping controller is installed yet. Keep the current branch out of production.
+
 ## Projects
 - `src/RestaurantWiFiControl`: WinForms management interface
 - `src/RestaurantWiFiGateway`: Windows portal and logical session handling
