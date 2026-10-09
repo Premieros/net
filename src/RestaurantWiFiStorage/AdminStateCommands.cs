@@ -56,6 +56,7 @@ public static class AdminStateCommands
             {
                 if (root["Network"] is JsonObject network)
                     network["ExperimentalWfpTrialUntilUtc"] = "";
+                    network["ExperimentalWfpTrialBlockingObserved"] = false;
                 return new AdminResponse(true);
             });
 
@@ -149,7 +150,9 @@ public static class AdminStateCommands
                             expires > DateTimeOffset.UtcNow.AddMinutes(2).AddSeconds(15))
                             throw new ArgumentException("WFP trial must be a short-lived future timestamp (up to two minutes).");
                     }
-                    root["Network"] = network.DeepClone();
+                    var clean = (JsonObject)network.DeepClone();
+                    clean["ExperimentalWfpTrialBlockingObserved"] = false;
+                    root["Network"] = clean;
                     return new AdminResponse(true);
                 }
                 default: throw new ArgumentException("Unsupported administrative operation.");
