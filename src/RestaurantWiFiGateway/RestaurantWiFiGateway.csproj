@@ -16,5 +16,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../RestaurantWiFiStorage/RestaurantWiFiStorage.csproj" />
+    <ProjectReference Include="../RestaurantWiFiNetworking/RestaurantWiFiNetworking.csproj" />
   </ItemGroup>
 </Project>
