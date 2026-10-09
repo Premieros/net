@@ -21,6 +21,29 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
     bool manuallyObservedBlock;
     bool policyInstalled;
 
+    // Read-only diagnostics for the administrator's loopback status endpoint.
+    // A committed WFP filter is not proof that the phone has Internet;
+    // only a second client/device check establishes that.
+    public object Snapshot()
+    {
+        lock (sync)
+        {
+            return new
+            {
+                ruleEngineActive = gate.Active,
+                installedFilterCount = gate.InstalledFilterCount,
+                authorizedClientIps = grants
+                    .Where(pair => pair.Value > DateTimeOffset.UtcNow)
+                    .Select(pair => pair.Key)
+                    .Order(StringComparer.Ordinal)
+                    .ToArray(),
+                endsUtc = end == default ? (DateTimeOffset?)null : end,
+                operatorConfirmedDeny = manuallyObservedBlock,
+                internetReachabilityVerified = false
+            };
+        }
+    }
+
     public DateTimeOffset TrialEndsAt
     {
         get { lock (sync) return end; }
