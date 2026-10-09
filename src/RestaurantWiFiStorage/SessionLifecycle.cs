@@ -18,10 +18,12 @@ public static class SessionLifecycle
             if (raw is null || !DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
                     DateTimeStyles.RoundtripKind, out var until) || until > now)
                 continue;
-            if (client["SessionStatus"]?.GetValue<string>() == "network-authorized")
+            var status = client["SessionStatus"]?.GetValue<string>();
+            if (status is "network-authorized" or "revocation-required")
             {
-                // Never mark a physically authorized session as disconnected before
-                // an enforcement backend confirms the network rule was revoked.
+                // Never mark physically authorized sessions disconnected before
+                // an enforcement backend confirms the rule was revoked.
+                if (status == "revocation-required") continue;
                 client["SessionStatus"] = "revocation-required";
             }
             else
