@@ -116,6 +116,8 @@ public sealed record AdmissionResult(bool Enforced, string Reason);
 /// </summary>
 public interface INetworkAdmissionController
 {
+    /// <summary>True only if packet-level policy is installed and its behavior was verified.</summary>
+    bool IsEnforcementReady { get; }
     ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt,
         CancellationToken token = default);
     ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
@@ -125,6 +127,8 @@ public interface INetworkAdmissionController
 /// <summary>Explicit safe placeholder until a packet filter is installed and tested.</summary>
 public sealed class UnconfiguredAdmissionController : INetworkAdmissionController
 {
+    public bool IsEnforcementReady => false;
+
     public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt,
         CancellationToken token = default) =>
         ValueTask.FromResult(new AdmissionResult(false, "Windows gateway admission control is not configured."));
