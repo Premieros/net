@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/RestaurantWiFiStorage/RestaurantWiFiStorage.csproj" />
+    <ProjectReference Include="../../src/RestaurantWiFiNetworking/RestaurantWiFiNetworking.csproj" />
   </ItemGroup>
 </Project>
