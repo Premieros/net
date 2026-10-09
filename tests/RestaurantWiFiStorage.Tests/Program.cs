@@ -86,6 +86,39 @@ try
         "router-uplink", "client-wifi", ClientAccessMode.ExternalAccessPointBridge, true), adapters);
     Check(!wifiBridgeOutput.ConfigurationConsistent, "External AP requires a wired Ethernet downlink");
 
+    var subnetAdapters = new[]
+    {
+        new AdapterSnapshot("uplink", "Router LAN", true, true, true,
+            NetworkInterfaceType.Ethernet, "192.168.1.10", "192.168.1.1", 24),
+        new AdapterSnapshot("out", "Customer AP LAN", true, true, false,
+            NetworkInterfaceType.Ethernet, "192.168.50.1", null, 24)
+    };
+    var wiredPath = new WindowsSharingTopology(
+        "uplink", "out", ClientAccessMode.ExternalAccessPointBridge, true);
+    var preflight = GatewayPreflight.Check(wiredPath, subnetAdapters);
+    Check(preflight.WiringAppearsValid && !preflight.ActualForwardingVerified &&
+          !preflight.AdmissionRulesVerified,
+        "Disjoint Ethernet subnets pass wiring-only inspection; routing and enforcement remain unverified");
+    var overlap = GatewayPreflight.Check(wiredPath, new[]
+    {
+        subnetAdapters[0],
+        subnetAdapters[1] with { Ipv4Address = "192.168.1.80" }
+    });
+    Check(!overlap.WiringAppearsValid && overlap.Issues.Any(x => x.Contains("overlap")),
+        "Overlapping upstream and AP client subnets are blocked");
+    var downlinkGateway = GatewayPreflight.Check(wiredPath, new[]
+    {
+        subnetAdapters[0],
+        subnetAdapters[1] with { HasIpv4DefaultGateway = true, Ipv4Gateway = "192.168.50.254" }
+    });
+    Check(!downlinkGateway.WiringAppearsValid && downlinkGateway.Issues.Any(x => x.Contains("default gateway")),
+        "Downstream default gateway is flagged as bypass risk");
+    var missingPrefix = GatewayPreflight.Check(wiredPath, new[]
+    {
+        subnetAdapters[0],
+        subnetAdapters[1] with { Ipv4PrefixLength = null }
+    });
+    Check(!missingPrefix.WiringAppearsValid, "Incomplete subnet data never passes preflight");
     var win10 = WindowsCompatibility.Assess(true, 19045);
     Check(win10.Family == WindowsEditionFamily.Windows10 && win10.TargetBuildRecognized
         && !win10.NetworkEnforcementVerified, "Windows 10 recognized without claiming network policy is active");
