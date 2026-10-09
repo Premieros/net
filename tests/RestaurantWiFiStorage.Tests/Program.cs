@@ -175,6 +175,31 @@ try
     var currentAdmin = JsonNode.Parse(adminStore.Read())!;
     Check(currentAdmin["Codes"]!.AsArray().Count == 1 && currentAdmin["RestaurantName"] is null,
         "Rejected administrative operations leave prior data intact");
+    var noBackend = new AccessRedemptionService(adminStore, new UnconfiguredAdmissionController());
+    var requestForCode = new RedemptionRequest("Alice", "123456789", "123456", "192.0.2.5", "test-device");
+    var unavailable = await noBackend.RedeemAsync(requestForCode);
+    Check(!unavailable.Success && JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0,
+        "Unconfigured network controller does not consume any access code");
+    var refusesGrant = new FakeAdmissionController(false);
+    var rejected = await new AccessRedemptionService(adminStore, refusesGrant).RedeemAsync(requestForCode);
+    Check(!rejected.Success && JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0,
+        "Denied network grant releases reservation without consuming code");
+    var acceptsGrant = new FakeAdmissionController(true);
+    var confirmed = await new AccessRedemptionService(adminStore, acceptsGrant).RedeemAsync(requestForCode);
+    Check(confirmed.Success && acceptsGrant.GrantCount == 1 &&
+        JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1,
+        "Confirmed network grant commits exactly one access code use");
+    var authorizedClient = JsonNode.Parse(adminStore.Read())!["Clients"]![0]!;
+    Check(authorizedClient["Connected"]!.GetValue<bool>() &&
+          authorizedClient["SessionStatus"]!.GetValue<string>() == "network-authorized",
+        "Only a confirmed network grant creates an active client");
+    var secondAttempt = await new AccessRedemptionService(adminStore, acceptsGrant)
+        .RedeemAsync(new RedemptionRequest("Bob", "123456788", "123456", "192.0.2.6", "other-device"));
+    Check(!secondAttempt.Success, "Redeeming a one-time code again is rejected");
+    var codesAfter = JsonNode.Parse(adminStore.Read())!["Codes"]!.AsArray();
+    Check(codesAfter.Count == 1 && codesAfter[0]!["Uses"]!.GetValue<int>() == 1,
+        "Denied attempts do not change the committed usage count");
+
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
     var invalidDir = Path.Combine(dir, "invalid");
@@ -188,4 +213,25 @@ try
 finally
 {
     try { Directory.Delete(dir, recursive: true); } catch { }
+}
+
+sealed class FakeAdmissionController : INetworkAdmissionController
+{
+    readonly bool allow;
+    int count;
+
+    public FakeAdmissionController(bool allow) => this.allow = allow;
+    public bool IsEnforcementReady => true;
+    public int GrantCount => count;
+
+    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client,
+        DateTimeOffset expiresAt, CancellationToken token = default)
+    {
+        Interlocked.Increment(ref count);
+        return ValueTask.FromResult(new AdmissionResult(allow, allow ? "allowed" : "denied"));
+    }
+
+    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default) =>
+        ValueTask.FromResult(new AdmissionResult(true, "revoked"));
 }
