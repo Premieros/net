@@ -271,9 +271,12 @@ try
     }
     catch (ArgumentException) { overlongTrialRejected = true; }
     Check(overlongTrialRejected, "Long-running WFP block attempts are rejected by service");
-    Check(!JsonNode.Parse(adminStore.Read())!["Network"]!["ExperimentalWfpTrialUntilUtc"]!
-        .GetValue<string>().Contains("does-not-exist") && overlongTrialRejected,
-        "Rejected WFP trial settings leave valid configuration untouched");
+    var preservedTrialTime = JsonNode.Parse(adminStore.Read())!["Network"]!
+        ["ExperimentalWfpTrialUntilUtc"]!.GetValue<string>();
+    Check(DateTimeOffset.TryParse(preservedTrialTime, out var preservedExpiry) &&
+        preservedExpiry > DateTimeOffset.UtcNow &&
+        preservedExpiry < DateTimeOffset.UtcNow.AddMinutes(2),
+        "Rejected WFP trial settings leave the previously accepted deadline intact");
 
     var restarted = new StateStore(dir);
     Check(JsonNode.Parse(restarted.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 1, "Persistent state after restart");
