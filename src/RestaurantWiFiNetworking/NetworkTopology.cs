@@ -32,7 +32,9 @@ public sealed record WindowsSharingTopology(
     bool ClientsUseWindowsAsGateway);
 
 public sealed record AdapterSnapshot(
-    string Id, string Name, bool IsUp, bool HasIpv4Address, bool HasIpv4DefaultGateway);
+    string Id, string Name, bool IsUp, bool HasIpv4Address, bool HasIpv4DefaultGateway,
+    NetworkInterfaceType InterfaceType = NetworkInterfaceType.Ethernet,
+    string? Ipv4Address = null, string? Ipv4Gateway = null);
 
 public sealed record TopologyAssessment(
     EnforcementBackend Backend,
@@ -53,7 +55,11 @@ public static class WindowsAdapterDiscovery
                     n.OperationalStatus == OperationalStatus.Up,
                     ip.UnicastAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork),
                     ip.GatewayAddresses.Any(a => a.Address.AddressFamily == AddressFamily.InterNetwork
-                        && !System.Net.IPAddress.Any.Equals(a.Address)));
+                        && !System.Net.IPAddress.Any.Equals(a.Address)),
+                    n.NetworkInterfaceType,
+                    ip.UnicastAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork)?.Address.ToString(),
+                    ip.GatewayAddresses.FirstOrDefault(a => a.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !System.Net.IPAddress.Any.Equals(a.Address))?.Address.ToString());
             })
             .ToArray();
 }
@@ -78,8 +84,17 @@ public static class TopologyValidator
             string.Equals(a.Id, topology.DownstreamAdapterId, StringComparison.OrdinalIgnoreCase));
         if (upstream is null || downstream is null)
             return Invalid("One or both configured Windows network adapters were not found.");
+        if (upstream.InterfaceType is not (NetworkInterfaceType.Ethernet or
+            NetworkInterfaceType.GigabitEthernet or NetworkInterfaceType.FastEthernetFx or
+            NetworkInterfaceType.FastEthernetT))
+            return Invalid("Router upstream must be a wired Ethernet adapter, not Wi-Fi.");
         if (!upstream.IsUp || !upstream.HasIpv4Address || !upstream.HasIpv4DefaultGateway)
-            return Invalid("Router-facing adapter must be connected with an IPv4 address and a default gateway.");
+            return Invalid("Router-facing Ethernet adapter must be connected with an IPv4 address and a default gateway.");
+        if (topology.AccessMode == ClientAccessMode.ExternalAccessPointBridge &&
+            downstream.InterfaceType is not (NetworkInterfaceType.Ethernet or
+                NetworkInterfaceType.GigabitEthernet or NetworkInterfaceType.FastEthernetFx or
+                NetworkInterfaceType.FastEthernetT))
+            return Invalid("An external access point must be connected to a downstream wired Ethernet adapter.");
         if (!downstream.IsUp || !downstream.HasIpv4Address)
             return Invalid("Client-facing adapter must be active and have its own IPv4 address.");
         if (!topology.ClientsUseWindowsAsGateway)
