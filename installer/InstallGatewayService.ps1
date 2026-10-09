@@ -16,6 +16,45 @@ try {
     if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
         throw "Gateway executable is missing: $BinaryPath"
     }
+    # Stage legacy data for first-time SQLite migration. Old installs sometimes
+    # have a v9-data.json ACL that denies LocalSystem read access, even though
+    # the elevated administrator can read it. Never modify the original ACL.
+    $dataDir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Restaurant WiFi Control'
+    $originalLegacy = Join-Path $dataDir 'v9-data.json'
+    $stagedLegacy = Join-Path $dataDir 'v9-data.import.json'
+    if (Test-Path -LiteralPath $originalLegacy -PathType Leaf) {
+        $temporaryStage = Join-Path $dataDir ("v9-data.import." + [guid]::NewGuid().ToString('N') + ".tmp")
+        try {
+            # Ensure the *directory* permits SYSTEM/Admin only, but do not
+            # recurse or change permissions on protected legacy JSON.
+            & "$env:WINDIR\System32\icacls.exe" $dataDir /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not prepare protected data directory ACL." }
+            & "$env:WINDIR\System32\icacls.exe" $dataDir /inheritance:r | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not isolate data directory permissions." }
+
+            # Write a new file, rather than Copy-Item/File.Copy, to inherit the
+            # secure destination ACL and not the original unreadable ACL.
+            $legacyBytes = [System.IO.File]::ReadAllBytes($originalLegacy)
+            [System.IO.File]::WriteAllBytes($temporaryStage, $legacyBytes)
+            $sourceHash = [System.Security.Cryptography.SHA256]::HashData($legacyBytes)
+            $stageHash = [System.Security.Cryptography.SHA256]::HashData(
+                [System.IO.File]::ReadAllBytes($temporaryStage))
+            if (-not ([Convert]::ToBase64String($sourceHash) -eq
+                      [Convert]::ToBase64String($stageHash))) {
+                throw "Staged legacy JSON SHA-256 integrity check failed."
+            }
+            Move-Item -LiteralPath $temporaryStage -Destination $stagedLegacy -Force -ErrorAction Stop
+            Record 'LEGACY_DATA_STAGED_FOR_SYSTEM: original JSON file preserved unchanged'
+        } catch {
+            Record ("LEGACY_DATA_STAGE_WARNING: " + $_.Exception.Message)
+            # The gateway may not require legacy import if SQLite already
+            # holds a valid State row. If it does, its startup will fail closed.
+        } finally {
+            if (Test-Path -LiteralPath $temporaryStage) {
+                Remove-Item -LiteralPath $temporaryStage -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
     $expectedPath = '"' + [System.IO.Path]::GetFullPath($BinaryPath) + '"'
     $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop
 
