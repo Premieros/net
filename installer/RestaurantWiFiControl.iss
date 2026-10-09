@@ -1,5 +1,5 @@
 #define MyAppName "Restaurant WiFi Control"
-#define MyAppVersion "9.3.0"
+#define MyAppVersion "9.3.1"
 #define MyAppPublisher "Premieros"
 #define MyAppExeName "RestaurantWiFiControl.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\Restaurant WiFi Control
 DefaultGroupName=Restaurant WiFi Control
 UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputDir=output
-OutputBaseFilename=Restaurant_WiFi_Control_V9_3_0_Experimental_IPv4_Code_Trial_Setup
+OutputBaseFilename=Restaurant_WiFi_Control_V9_3_1_IPv4_Per_Device_Permit_Fix_Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
