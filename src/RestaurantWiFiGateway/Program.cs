@@ -7,7 +7,23 @@ using RestaurantWiFiStorage;
 using RestaurantWiFiGateway;
 using RestaurantWiFiNetworking;
 
-GatewayDataSecurity.Protect();
+try { GatewayDataSecurity.Protect(); }
+catch (Exception ex)
+{
+    // Keep a diagnostic for failures before Windows hosting/logging starts.
+    // Avoid logging customer data. This file is under the service's data directory.
+    try
+    {
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "Restaurant WiFi Control");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "gateway-startup-error.txt"),
+            DateTimeOffset.UtcNow.ToString("O") + " " + ex.GetType().Name + ": " + ex.Message);
+    }
+    catch { }
+    throw;
+}
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
 builder.Services.AddSingleton<WfpTrialStatus>();
