@@ -124,6 +124,15 @@ public interface INetworkAdmissionController
         CancellationToken token = default);
 }
 
+/// <summary>
+/// Non-production WFP field experiment: limit session lifetime to the trial
+/// window. This is NOT a persistent or fail-closed admission backend.
+/// </summary>
+public interface ITimeLimitedTrialAdmissionController : INetworkAdmissionController
+{
+    DateTimeOffset TrialEndsAt { get; }
+}
+
 /// <summary>Explicit safe placeholder until a packet filter is installed and tested.</summary>
 public sealed class UnconfiguredAdmissionController : INetworkAdmissionController
 {
