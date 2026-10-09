@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>RestaurantWiFiControl</AssemblyName>
     <RootNamespace>RestaurantWiFiControl</RootNamespace>
-    <Version>9.3.0</Version>
+    <Version>9.3.1</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
