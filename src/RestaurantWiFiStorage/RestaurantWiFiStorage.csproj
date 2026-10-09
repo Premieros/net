@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <ProjectReference Include="../RestaurantWiFiNetworking/RestaurantWiFiNetworking.csproj" />
   </ItemGroup>
 </Project>
