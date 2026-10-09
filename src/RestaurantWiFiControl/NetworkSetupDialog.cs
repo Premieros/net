@@ -205,14 +205,7 @@ internal sealed class NetworkSetupDialog : Form
         var downlink = (downstream.SelectedItem as AdapterChoice)?.Adapter;
         if (!enable)
         {
-            Storage.SetNetwork(new NetworkPreferences
-            {
-                UpstreamAdapterId = (uplink?.Id ?? original.UpstreamAdapterId),
-                DownstreamAdapterId = (downlink?.Id ?? original.DownstreamAdapterId),
-                AccessMode = mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
-                    ClientAccessMode.ExternalAccessPointBridge,
-                ExperimentalWfpTrialUntilUtc = ""
-            });
+            Storage.StopNetworkTrial();
             MessageBox.Show("تم إرسال طلب إيقاف اختبار الحجب. تحقق من حالة Gateway.", "اختبار الشبكة");
             return;
         }
