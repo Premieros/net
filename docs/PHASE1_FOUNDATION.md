@@ -1,3 +1,37 @@
+# Privileged service and named-pipe administration — in review
+
+The Gateway Windows service now owns the SQLite data store. On service startup it attempts to
+restrict the ProgramData directory to **SYSTEM** and local **Administrators** before opening SQLite.
+If access control setup fails the service startup should fail rather than continue with a writable
+public database. This ACL setup must be tested on Windows 10 and Windows 11, including upgrades from
+existing installations.
+
+The WinForms desktop is now requested to run elevated via its Windows manifest. It connects to a
+**local named pipe** with a Windows ACL limited to SYSTEM and the local Administrators group and
+requests explicitly allowlisted commands. It no longer directly opens the SQLite database.
+
+Administrative commands implemented: read, initialize, add_group, add_codes, set_password,
+set_name, set_network. Arbitrary state replacement is not allowed. The public HTTP portal does not
+host these commands. The service is still the owner of code redemption and session expiration.
+
+## Security and deployment cautions
+
+- **Windows elevation is required** to administer the system. Every permitted local Administrator
+  can issue administrative commands; more granular app accounts and tamper-resistant login
+  controls are not implemented.
+- This is a security architecture milestone, **not** an approved production release. Named pipe
+  ACLs, inherited filesystem permissions, installer service lifecycle, and upgrade migration
+  must be verified on physical Windows 10 / 11 installations.
+- Keep both WinForms and Gateway on the same revision; do not run the legacy JSON desktop
+  against the service-owned SQLite database.
+- The database does not encode physical networking rules. Captive portal interception,
+  forwarding/NAT/ICS, client deny/allow, per-client speed shaping and quota enforcement remain
+  **unimplemented**.
+- Confirm network path Router (LAN Ethernet) -> Windows PC -> downstream Ethernet AP
+  or Windows-hosted Wi-Fi hotspot before implementing firewall admission.
+
+---
+
 # Access Point requirement update
 
 This project targets **Access Points sourced from the Windows computer or from an external router/AP**, not just the Windows Mobile Hotspot feature.
