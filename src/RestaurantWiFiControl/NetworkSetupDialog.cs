@@ -200,7 +200,7 @@ internal sealed class NetworkSetupDialog : Form
                 "تحقق من توصيل الشبكة", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        Storage.Mutate(data => data.Network = new NetworkPreferences
+        Storage.SetNetwork(new NetworkPreferences
         {
             UpstreamAdapterId = uplink.Id,
             DownstreamAdapterId = downlink.Id,
