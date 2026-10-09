@@ -10,7 +10,7 @@ namespace RestaurantWiFiGateway;
 /// An operator must first observe that a test phone loses external IPv4 access
 /// while the local portal remains reachable, then explicitly confirm.
 /// </summary>
-internal sealed class TrialAdmissionController : INetworkAdmissionController, IDisposable
+internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionController, IDisposable
 {
     readonly object sync = new();
     readonly ExperimentalWfpForwardGate gate = new();
@@ -20,6 +20,11 @@ internal sealed class TrialAdmissionController : INetworkAdmissionController, ID
     string pathFingerprint = "";
     bool manuallyObservedBlock;
     bool policyInstalled;
+
+    public DateTimeOffset TrialEndsAt
+    {
+        get { lock (sync) return end; }
+    }
 
     public bool IsEnforcementReady
     {
