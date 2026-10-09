@@ -24,7 +24,15 @@ internal static class GatewayDataSecurity
 
         // SID form works on English and non-English Windows installations.
         // Grant first so the service never locks itself out while removing inherited grants.
+        // icacls (OI)(CI)F ACEs are inherited by children but can be
+        // inherit-only on *existing files*. Removing inheritance before
+        // applying an explicit file ACE leaves an EMPTY DACL on SQLite files,
+        // which makes LocalSystem fail to open wifi-state.db (SQLite Error 14).
+        //
+        // Always grant non-inheriting F to every existing file FIRST, then
+        // turn off inheritance. Do not expose SQLite to Users or Everyone.
         Run(folder, "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q");
+        Run(folder, "/grant", "*S-1-5-18:F", "*S-1-5-32-544:F", "/T", "/Q");
         Run(folder, "/inheritance:r", "/T", "/Q");
         Run(folder, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545", "/T", "/Q");
     }
