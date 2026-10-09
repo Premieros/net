@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using RestaurantWiFiStorage;
 using RestaurantWiFiNetworking;
 using System.Net.NetworkInformation;
+using System.Net;
 
 var count = 0;
 void Check(bool condition, string message)
@@ -167,6 +168,53 @@ try
     var unconfigured = new UnconfiguredAdmissionController();
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
+
+    // WFP higher-weight PERMIT does not necessarily override an overlapping
+    // BLOCK. We must DENY all IPv4 sources EXCEPT precisely the permitted IPs.
+    var permittedA = IPAddress.Parse("192.168.137.101");
+    var permittedB = IPAddress.Parse("192.168.137.102");
+    var deniesNone = Ipv4TrialRulePlanner.DenyAllExcept(Array.Empty<IPAddress>());
+    Check(deniesNone.Count == 1 && deniesNone[0].Length == 0 &&
+        deniesNone[0].Contains(permittedA), "No test codes: one deny policy covers every IPv4 source");
+    var singleDeny = Ipv4TrialRulePlanner.DenyAllExcept(new[] { permittedA });
+    Check(!singleDeny.Any(p => p.Contains(permittedA)) &&
+        singleDeny.Any(p => p.Contains(permittedB)),
+        "One granted IP never intersects WFP deny filters; uncoded IP stays denied");
+    var denyTwo = Ipv4TrialRulePlanner.DenyAllExcept(new[] { permittedA, permittedB, permittedA });
+    Check(denyTwo.Count < 100 && denyTwo.All(p => p.Length is >= 0 and <= 32),
+        "Compact non-overlapping IPv4 deny-prefix plan supports two devices");
+    var allowedSet = new HashSet<uint> { Ipv4TrialRulePlanner.ToNetworkUInt32(permittedA),
+                                         Ipv4TrialRulePlanner.ToNetworkUInt32(permittedB) };
+    var coveredCorrectly = true;
+    foreach (var octet in Enumerable.Range(0, 256))
+    {
+        var ip = IPAddress.Parse("192.168.137." + octet);
+        var blocks = denyTwo.Count(p => p.Contains(ip));
+        if (blocks != (allowedSet.Contains(Ipv4TrialRulePlanner.ToNetworkUInt32(ip)) ? 0 : 1))
+        {
+            coveredCorrectly = false;
+            break;
+        }
+    }
+    Check(coveredCorrectly, "Every address in TP-Link client /24 is either exclusively allowed or blocked exactly once");
+    Check(denyTwo.Count(p => p.Contains(IPAddress.Parse("0.0.0.0"))) == 1 &&
+          denyTwo.Count(p => p.Contains(IPAddress.Parse("255.255.255.255"))) == 1 &&
+          denyTwo.Count(p => p.Contains(IPAddress.Parse("192.168.8.6"))) == 1,
+        "Other IPv4 ranges cannot evade default deny by source address selection");
+    var boundaryAllowed = new[] { IPAddress.Parse("0.0.0.0"), IPAddress.Parse("255.255.255.255") };
+    var boundaryDenies = Ipv4TrialRulePlanner.DenyAllExcept(boundaryAllowed);
+    Check(boundaryDenies.All(x => !boundaryAllowed.Any(x.Contains)) &&
+          boundaryDenies.Count(p => p.Contains(IPAddress.Parse("1.2.3.4"))) == 1,
+        "CIDR exclusion handles extreme IPv4 boundaries without wraparound");
+    var tooManyPermitsRejected = false;
+    try
+    {
+        Ipv4TrialRulePlanner.DenyAllExcept(Enumerable.Range(1,
+            Ipv4TrialRulePlanner.MaxTrialPermits + 1)
+            .Select(i => IPAddress.Parse("192.168.137." + i)));
+    }
+    catch (ArgumentException) { tooManyPermitsRejected = true; }
+    Check(tooManyPermitsRejected, "Experimental WFP refuses excessive clients instead of unbounded filter growth");
 
     // Code admission is never enabled merely by a network selection. A real
     // operator must confirm a two-minute WFP block trial on test hardware.
