@@ -16,7 +16,8 @@ internal static class Program
         try { Storage.Initialize(); }
         catch (Exception ex)
         {
-            MessageBox.Show("تعذر الاتصال بخدمة الإدارة المحلية. تأكد من تشغيل Restaurant WiFi Gateway بصلاحيات المسؤول.\n" +
+            MessageBox.Show("لم تستجب خدمة Restaurant WiFi Gateway. افتح services.msc ثم شغّل Restaurant WiFi Gateway أو أعد تشغيلها.\n" +
+                "إذا كانت تعمل، فافحص سجل تطبيقات Windows (Event Viewer) وجرّب إعادة فتح البرنامج.\n" +
                 ex.Message, "خدمة Gateway غير متاحة", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
@@ -97,8 +98,21 @@ internal static class Storage
 
     public static void Initialize()
     {
-        AdminPipeClient.Send(new AdminRequest("initialize"));
-        Reload();
+        // Windows services may still be starting when the installer launches
+        // the desktop application. Retry only connection timeouts, never ACL errors.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                AdminPipeClient.Send(new AdminRequest("initialize"));
+                Reload();
+                return;
+            }
+            catch (TimeoutException) when (attempt < 5)
+            {
+                Thread.Sleep(1200);
+            }
+        }
     }
 
     public static void Reload()
