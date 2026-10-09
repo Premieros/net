@@ -154,11 +154,15 @@ internal sealed class NetworkSetupDialog : Form
 
     void Report()
     {
+        var os = WindowsCompatibility.InspectCurrent();
+        var osText = (os.Family == WindowsEditionFamily.Windows11 ? "Windows 11" :
+            os.Family == WindowsEditionFamily.Windows10 ? "Windows 10" : "نظام غير مدعوم") +
+            $" (Build {os.Build})\r\n" + os.Message + "\r\n\r\n";
         var uplink = (upstream.SelectedItem as AdapterChoice)?.Adapter;
         var downlink = (downstream.SelectedItem as AdapterChoice)?.Adapter;
         if (uplink is null || downlink is null)
         {
-            diagnostic.Text = "اختر كارت Ethernet الذي يصله الراوتر وكارتًا مختلفًا لتوزيع الإنترنت.\r\n" +
+            diagnostic.Text = osText + "اختر كارت Ethernet الذي يصله الراوتر وكارتًا مختلفًا لتوزيع الإنترنت.\r\n" +
                               "قد لا يظهر كارت Hotspot الافتراضي حتى يتم تشغيله من Windows.";
             return;
         }
@@ -167,7 +171,7 @@ internal sealed class NetworkSetupDialog : Form
             mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
                 ClientAccessMode.ExternalAccessPointBridge, true);
         var result = TopologyValidator.Assess(topology, detected);
-        diagnostic.Text = "مدخل الإنترنت: " + uplink.Name + "\r\n" +
+        diagnostic.Text = osText + "مدخل الإنترنت: " + uplink.Name + "\r\n" +
                           "عنوان المدخل: " + (uplink.Ipv4Address ?? "غير معروف") + "\r\n" +
                           "راوتر المصدر: " + (uplink.Ipv4Gateway ?? "غير معروف") + "\r\n" +
                           "مخرج العملاء: " + downlink.Name + "\r\n" +
