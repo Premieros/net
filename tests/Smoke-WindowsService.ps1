@@ -94,6 +94,22 @@ try {
         throw 'Running Windows service did not respond to administrator IPC.'
     }
     Write-Host 'PASS: Running Windows service responds over restricted admin named pipe.'
+
+    # Production admission must never appear ready merely because the portal
+    # starts. Trial-code grants are always opt-in, not enabled at install.
+    $statusInfo = $null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        try {
+            $statusInfo = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/status/' -TimeoutSec 3
+            break
+        } catch { Start-Sleep -Milliseconds 500 }
+    }
+    if ($null -eq $statusInfo) { throw 'Local portal status HTTP endpoint is unreachable.' }
+    if ($statusInfo.admissionReady -ne $false -or
+        $statusInfo.ipv4CodeTrialReady -ne $false) {
+        throw 'Freshly installed Gateway must not claim production or trial admission readiness.'
+    }
+    Write-Host 'PASS: production code control disabled and WFP IPv4 trial opt-in by default.'
 } finally {
     if (Get-Service -Name $name -ErrorAction SilentlyContinue) {
         if ($started) {
