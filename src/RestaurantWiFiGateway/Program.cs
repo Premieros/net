@@ -25,7 +25,7 @@ catch (Exception ex)
     throw;
 }
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddWindowsService(options => options.ServiceName = "Restaurant WiFi Gateway");
+builder.Services.AddWindowsService(options => options.ServiceName = "RestaurantWiFiGateway");
 builder.Services.AddSingleton<WfpTrialStatus>();
 // Start the admin channel before optional portal/network diagnostics.
 builder.Services.AddHostedService<AdminPipeWorker>();
