@@ -1,3 +1,27 @@
+# Next networking foundation batch — network preflight and transactional authorization
+
+- The Windows administration dialog now reports IPv4 subnet/prefix information, warns if
+  uplink and downstream networks overlap, and flags a downstream default gateway that may bypass
+  the Windows PC. A passing preflight means **plausible wiring only**, not that NAT or packet filtering works.
+- The Gateway's portal now **fails closed** with HTTP 503 whenever there is no verified packet-level
+  admission provider. It does not consume customers' codes or mark them connected.
+- A new `AccessRedemptionService` reserves a code under a SQLite transaction, requests real
+  network authorization from `INetworkAdmissionController`, and increments `Uses` only after the
+  controller reports that the rule was applied. A refused grant releases the reservation; a failed
+  commit attempts a compensating revoke. Mock-provider tests exercise allow, deny, and concurrent use.
+- The management dashboard distinguishes a merely recorded session from a logically authorized one.
+  It still cannot independently measure actual packet reachability.
+- The Windows installer attempts to stop the service **before** replacing its executable, preserves
+  the service registration across upgrades, and aborts if an installed service cannot be stopped.
+  Installer execution, upgrades, named pipe permissions and actual Windows traffic still need on-device tests.
+
+**The network filter is intentionally unconfigured.** No WFP admission provider, NAT/ICS setup,
+per-client rate control, quota meter, DHCP/captive portal redirect or verified fail-closed
+network behavior has been implemented yet. Never interpret successful code redemption tests using
+a mock controller as real internet sharing capability.
+
+---
+
 # Privileged service and named-pipe administration — in review
 
 The Gateway Windows service now owns the SQLite data store. On service startup it attempts to
