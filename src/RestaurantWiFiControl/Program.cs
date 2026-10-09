@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace RestaurantWiFiControl;
 
@@ -69,6 +70,9 @@ internal sealed class ClientRecord
     public string Group { get; set; } = "";
     public double UsedMb { get; set; }
     public bool Connected { get; set; }
+    // Preserve gateway-owned session fields when the desktop app saves the shared JSON.
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> AdditionalFields { get; set; } = new();
 }
 
 internal static class Storage
@@ -108,8 +112,18 @@ internal static class Storage
         }
     }
 
-    public static void Save() =>
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(Data, JsonOptions), Encoding.UTF8);
+    public static void Save()
+    {
+        // Replace the file atomically so readers never observe partially written JSON.
+        // Full multi-process consistency will be delivered with the SQLite migration.
+        var temp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temp, JsonSerializer.Serialize(Data, JsonOptions), Encoding.UTF8);
+            File.Move(temp, FilePath, true);
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
 
     public static bool HasPassword() =>
         !string.IsNullOrWhiteSpace(Data.PasswordSalt) && !string.IsNullOrWhiteSpace(Data.PasswordHash);
@@ -560,9 +574,9 @@ internal sealed class MainForm : Form
                 return;
             }
             var next = PromptPassword("كلمة المرور الجديدة");
-            if (string.IsNullOrWhiteSpace(next) || next.Length < 4)
+            if (string.IsNullOrWhiteSpace(next) || next.Length < 12)
             {
-                MessageBox.Show("كلمة المرور الجديدة قصيرة.", "خطأ");
+                MessageBox.Show("كلمة المرور الجديدة يجب أن تكون 12 حرفاً على الأقل.", "خطأ");
                 return;
             }
             Storage.SetPassword(next);
