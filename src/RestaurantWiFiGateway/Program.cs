@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
 using RestaurantWiFiStorage;
 using RestaurantWiFiGateway;
+using RestaurantWiFiNetworking;
 
 GatewayDataSecurity.Protect();
 var builder = Host.CreateApplicationBuilder(args);
@@ -20,11 +21,15 @@ sealed class GatewayWorker : BackgroundService
     readonly Dictionary<string, DateTimeOffset> lastAttempt = new(StringComparer.Ordinal);
     HttpListener? listener;
     readonly SemaphoreSlim activationGate = new(1, 1);
+    readonly SemaphoreSlim requestSlots = new(32, 32);
+    readonly INetworkAdmissionController admission = new UnconfiguredAdmissionController();
+    readonly AccessRedemptionService redemption;
     const int MaxFormBytes = 4096;
 
     public GatewayWorker()
     {
         Directory.CreateDirectory(dataDir);
+        redemption = new AccessRedemptionService(store, admission);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,7 +44,17 @@ sealed class GatewayWorker : BackgroundService
             try
             {
                 var ctx = await listener.GetContextAsync().WaitAsync(stoppingToken);
-                _ = Task.Run(() => Handle(ctx), stoppingToken);
+                if (!await requestSlots.WaitAsync(0, stoppingToken))
+                {
+                    ctx.Response.StatusCode = 503;
+                    ctx.Response.Close();
+                    continue;
+                }
+                _ = Task.Run(async () =>
+                {
+                    try { await Handle(ctx); }
+                    finally { requestSlots.Release(); }
+                });
             }
             catch (OperationCanceledException) { break; }
             catch { await Task.Delay(500, stoppingToken); }
@@ -76,7 +91,9 @@ sealed class GatewayWorker : BackgroundService
                 return;
             }
             if (ctx.Request.HttpMethod != "GET") { ctx.Response.StatusCode = 405; ctx.Response.Close(); return; }
-            await Write(ctx, PortalHtml(""), "text/html; charset=utf-8");
+            await Write(ctx, PortalHtml(admission.IsEnforcementReady ? "" :
+                "هذه البوابة في وضع الإعداد. تفعيل الأكواد متوقف حتى يتم التأكد من التحكم بالشبكة."),
+                "text/html; charset=utf-8");
         }
         catch
         {
@@ -84,91 +101,61 @@ sealed class GatewayWorker : BackgroundService
         }
     }
 
-    sealed record ActivationResult(bool Success, string Message, int Minutes = 0);
-
     async Task Activate(HttpListenerContext ctx)
     {
-        if (ctx.Request.ContentLength64 > MaxFormBytes ||
-            !string.Equals(ctx.Request.ContentType?.Split(';')[0].Trim(), "application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        // No real Windows packet-filtering backend has been deployed. A valid code must
+        // not be consumed merely because this web portal can accept a form.
+        if (!admission.IsEnforcementReady)
         {
-            ctx.Response.StatusCode = 400; ctx.Response.Close(); return;
+            ctx.Response.StatusCode = 503;
+            await Write(ctx, PortalHtml("التحكم الفعلي بالإنترنت لم يجهز بعد. لم يتم استخدام الكود."),
+                "text/html; charset=utf-8");
+            return;
+        }
+        if (ctx.Request.ContentLength64 > MaxFormBytes ||
+            !string.Equals(ctx.Request.ContentType?.Split(';')[0].Trim(),
+                "application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.StatusCode = 400;
+            ctx.Response.Close();
+            return;
         }
         using var buffer = new MemoryStream();
         var chunk = new byte[1024];
         int read;
         while ((read = await ctx.Request.InputStream.ReadAsync(chunk)) != 0)
         {
-            if (buffer.Length + read > MaxFormBytes) { ctx.Response.StatusCode = 413; ctx.Response.Close(); return; }
+            if (buffer.Length + read > MaxFormBytes)
+            {
+                ctx.Response.StatusCode = 413;
+                ctx.Response.Close();
+                return;
+            }
             buffer.Write(chunk, 0, read);
         }
+
         var values = ParseForm(Encoding.UTF8.GetString(buffer.ToArray()));
-        var name = values.GetValueOrDefault("name", "").Trim();
-        var phone = values.GetValueOrDefault("phone", "").Trim();
-        var code = values.GetValueOrDefault("code", "").Trim().ToUpperInvariant();
         var ip = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
-        if (name.Length < 2 || name.Length > 100 || phone.Length < 5 || phone.Length > 30 || code.Length < 4 || code.Length > 32)
-        {
-            await Write(ctx, PortalHtml("راجع الاسم والهاتف والكود."), "text/html; charset=utf-8"); return;
-        }
         var now = DateTimeOffset.UtcNow;
-        foreach (var old in lastAttempt.Where(x => x.Value < now.AddMinutes(-2)).Select(x => x.Key).ToArray())
-            lastAttempt.Remove(old);
-        if (lastAttempt.TryGetValue(ip, out var previous) && now - previous < TimeSpan.FromSeconds(2))
+        foreach (var old in lastAttempt.Where(x => x.Value < now.AddMinutes(-2))
+            .Select(x => x.Key).ToArray()) lastAttempt.Remove(old);
+        if (lastAttempt.TryGetValue(ip, out var previous) &&
+            now - previous < TimeSpan.FromSeconds(2))
         {
-            ctx.Response.StatusCode = 429; ctx.Response.Close(); return;
+            ctx.Response.StatusCode = 429;
+            ctx.Response.Close();
+            return;
         }
         lastAttempt[ip] = now;
 
-        var result = store.Update(root =>
-        {
-            var codes = root["Codes"]?.AsArray() ?? new JsonArray();
-            JsonObject? matched = null;
-            foreach (var item in codes)
-            {
-                if (item is not JsonObject entry) continue;
-                if (string.Equals(entry["Code"]?.GetValue<string>(), code, StringComparison.OrdinalIgnoreCase) &&
-                    (entry["Enabled"]?.GetValue<bool>() ?? false) &&
-                    (entry["Uses"]?.GetValue<int>() ?? 0) < (entry["MaxUses"]?.GetValue<int>() ?? 1))
-                { matched = entry; break; }
-            }
-            if (matched is null) return new ActivationResult(false, "الكود غير صحيح أو انتهى استخدامه.");
-            var groupId = matched["GroupId"]?.GetValue<string>() ?? "";
-            var groups = root["Groups"]?.AsArray() ?? new JsonArray();
-            JsonObject? group = null;
-            foreach (var item in groups)
-                if (item is JsonObject entry &&
-                    string.Equals(entry["Id"]?.GetValue<string>(), groupId, StringComparison.OrdinalIgnoreCase))
-                { group = entry; break; }
-            if (group is null || !(group["Enabled"]?.GetValue<bool>() ?? false))
-                return new ActivationResult(false, "الباقة غير متاحة.");
-            var minutes = group["Minutes"]?.GetValue<int>() ?? 0;
-            if (minutes <= 0) return new ActivationResult(false, "مدة الباقة غير صالحة.");
-            SessionLifecycle.Expire(root, now);
-            var clients = root["Clients"]?.AsArray() ?? new JsonArray();
-            foreach (var item in clients)
-            {
-                if (item is not JsonObject client) continue;
-                if ((client["Connected"]?.GetValue<bool>() ?? false) &&
-                    DateTimeOffset.TryParse(client["SessionExpiresAt"]?.GetValue<string>(), out var expiry) &&
-                    expiry > now &&
-                    string.Equals(client["Phone"]?.GetValue<string>(), phone, StringComparison.OrdinalIgnoreCase))
-                    return new ActivationResult(false, "هذا الهاتف لديه جلسة نشطة بالفعل.");
-            }
-            root["Clients"] = clients;
-            var groupName = group["Name"]?.GetValue<string>() ?? "";
-            clients.Add(new JsonObject
-            {
-                ["Name"] = name, ["Phone"] = phone, ["Device"] = ctx.Request.UserAgent ?? "",
-                ["Ip"] = ip, ["Mac"] = "", ["Group"] = groupName, ["UsedMb"] = 0, ["Connected"] = true,
-                ["SessionStartedAt"] = now.ToString("O"),
-                ["SessionExpiresAt"] = now.AddMinutes(minutes).ToString("O"),
-                ["AccessCode"] = code, ["SessionStatus"] = "pending-network-authorization"
-            });
-            matched["Uses"] = (matched["Uses"]?.GetValue<int>() ?? 0) + 1;
-            return new ActivationResult(true, groupName, minutes);
-        });
-        await Write(ctx, result.Success ? SuccessHtml(result.Message, result.Minutes) : PortalHtml(result.Message),
-            "text/html; charset=utf-8");
+        var request = new RedemptionRequest(
+            values.GetValueOrDefault("name", "").Trim(),
+            values.GetValueOrDefault("phone", "").Trim(),
+            values.GetValueOrDefault("code", "").Trim().ToUpperInvariant(),
+            ip, (ctx.Request.UserAgent ?? "")[..Math.Min(512, (ctx.Request.UserAgent ?? "").Length)]);
+        var result = await redemption.RedeemAsync(request);
+        await Write(ctx, result.Success ? SuccessHtml(result.Message, result.Minutes) :
+            PortalHtml(result.Message), "text/html; charset=utf-8");
     }
 
     static Dictionary<string,string> ParseForm(string body)
@@ -187,7 +174,7 @@ sealed class GatewayWorker : BackgroundService
 <body><div class='box'><h1>Restaurant Wi-Fi</h1><p>أدخل بياناتك وكود الدخول لتفعيل الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
 <form method='post' action='/activate'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
 
-    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم تسجيل الكود</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تسجيل الجلسة؛ السماح الفعلي بالإنترنت يتطلب تهيئة التحكم بالشبكة.</p></body></html>";
+    static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم منح اتصال الشبكة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>تم تطبيق صلاحيات الاتصال والتحقق منها.</p></body></html>";
 
     static async Task Write(HttpListenerContext ctx, string text, string contentType)
     {
