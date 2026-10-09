@@ -10,7 +10,7 @@ $installLog = Join-Path $env:TEMP "restaurant-wifi-install-$stamp.log"
 $stopLog = Join-Path $env:TEMP "restaurant-wifi-stop-$stamp.log"
 
 function RunInstaller([string]$phase) {
-    Write-Host "Starting $phase: $installer"
+    Write-Host "Starting ${phase}: $installer"
     $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="' + $installLog + '"'
     $process = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait
     if ($process.ExitCode -ne 0) {
@@ -25,7 +25,7 @@ function RunInstaller([string]$phase) {
     $svc.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running,
         [TimeSpan]::FromSeconds(35))
     $svc.Refresh()
-    if ($svc.Status -ne 'Running') { throw "$phase: Gateway was not Running." }
+    if ($svc.Status -ne 'Running') { throw "${phase}: Gateway was not Running." }
     Write-Host "PASS: $phase installed a running Gateway Windows service."
 }
 
