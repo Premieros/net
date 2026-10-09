@@ -18,8 +18,17 @@ public static class SessionLifecycle
             if (raw is null || !DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
                     DateTimeStyles.RoundtripKind, out var until) || until > now)
                 continue;
-            client["Connected"] = false;
-            client["SessionStatus"] = "expired";
+            if (client["SessionStatus"]?.GetValue<string>() == "network-authorized")
+            {
+                // Never mark a physically authorized session as disconnected before
+                // an enforcement backend confirms the network rule was revoked.
+                client["SessionStatus"] = "revocation-required";
+            }
+            else
+            {
+                client["Connected"] = false;
+                client["SessionStatus"] = "expired";
+            }
             expired++;
         }
         return expired;
