@@ -55,8 +55,10 @@ public static class AdminStateCommands
             return store.Update(root =>
             {
                 if (root["Network"] is JsonObject network)
+                {
                     network["ExperimentalWfpTrialUntilUtc"] = "";
                     network["ExperimentalWfpTrialBlockingObserved"] = false;
+                }
                 return new AdminResponse(true);
             });
 
