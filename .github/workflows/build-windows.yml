@@ -72,6 +72,6 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Restaurant-WiFi-Control-V9.2.1-Service-Hotfix
-          path: installer/output/Restaurant_WiFi_Control_V9_2_1_Beta_Fix_Setup.exe
+          name: Restaurant-WiFi-Control-V9.2.2-Upgrade-Fix
+          path: installer/output/Restaurant_WiFi_Control_V9_2_2_Beta_Upgrade_Fix_Setup.exe
           if-no-files-found: error
