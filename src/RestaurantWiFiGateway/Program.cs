@@ -14,6 +14,8 @@ sealed class GatewayWorker : BackgroundService
     readonly string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Restaurant WiFi Control");
     readonly string dataFile;
     HttpListener? listener;
+    readonly SemaphoreSlim activationGate = new(1, 1);
+    const int MaxFormBytes = 4096;
 
     public GatewayWorker()
     {
@@ -48,7 +50,15 @@ sealed class GatewayWorker : BackgroundService
                 await Write(ctx, "portal-ready", "text/plain; charset=utf-8");
                 return;
             }
-            if (ctx.Request.HttpMethod == "POST") { await Activate(ctx); return; }
+            if (ctx.Request.HttpMethod == "POST")
+            {
+                if (ctx.Request.Url?.AbsolutePath != "/activate") { ctx.Response.StatusCode = 404; ctx.Response.Close(); return; }
+                await activationGate.WaitAsync();
+                try { await Activate(ctx); }
+                finally { activationGate.Release(); }
+                return;
+            }
+            if (ctx.Request.HttpMethod != "GET") { ctx.Response.StatusCode = 405; ctx.Response.Close(); return; }
             await Write(ctx, PortalHtml(""), "text/html; charset=utf-8");
         }
         catch
@@ -59,8 +69,20 @@ sealed class GatewayWorker : BackgroundService
 
     async Task Activate(HttpListenerContext ctx)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var values = ParseForm(await reader.ReadToEndAsync());
+        if (ctx.Request.ContentLength64 > MaxFormBytes ||
+            !string.Equals(ctx.Request.ContentType?.Split(';')[0].Trim(), "application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.StatusCode = 400; ctx.Response.Close(); return;
+        }
+        using var buffer = new MemoryStream();
+        var chunk = new byte[1024];
+        int read;
+        while ((read = await ctx.Request.InputStream.ReadAsync(chunk)) != 0)
+        {
+            if (buffer.Length + read > MaxFormBytes) { ctx.Response.StatusCode = 413; ctx.Response.Close(); return; }
+            buffer.Write(chunk, 0, read);
+        }
+        var values = ParseForm(Encoding.UTF8.GetString(buffer.ToArray()));
         var name = values.GetValueOrDefault("name", "").Trim();
         var phone = values.GetValueOrDefault("phone", "").Trim();
         var code = values.GetValueOrDefault("code", "").Trim().ToUpperInvariant();
@@ -95,6 +117,8 @@ sealed class GatewayWorker : BackgroundService
             var o = n?.AsObject();
             if (o is null) continue;
             if ((o["Connected"]?.GetValue<bool>() ?? false) &&
+                DateTimeOffset.TryParse(o["SessionExpiresAt"]?.GetValue<string>(), out var expires) &&
+                expires > DateTimeOffset.UtcNow &&
                 string.Equals(o["Phone"]?.GetValue<string>(), phone, StringComparison.OrdinalIgnoreCase))
             { await Write(ctx, PortalHtml("هذا الهاتف لديه جلسة نشطة بالفعل."), "text/html; charset=utf-8"); return; }
         }
@@ -108,8 +132,13 @@ sealed class GatewayWorker : BackgroundService
             if (o is not null && string.Equals(o["Id"]?.GetValue<string>(), groupId, StringComparison.OrdinalIgnoreCase))
             { group = o; break; }
         }
-        var groupName = group?["Name"]?.GetValue<string>() ?? "";
-        var minutes = group?["Minutes"]?.GetValue<int>() ?? 60;
+        if (group is null || !(group["Enabled"]?.GetValue<bool>() ?? false))
+        {
+            await Write(ctx, PortalHtml("الباقة غير متاحة."), "text/html; charset=utf-8"); return;
+        }
+        var groupName = group["Name"]?.GetValue<string>() ?? "";
+        var minutes = group["Minutes"]?.GetValue<int>() ?? 60;
+        if (minutes <= 0) { ctx.Response.StatusCode = 500; ctx.Response.Close(); return; }
 
         clients.Add(new JsonObject
         {
@@ -120,7 +149,13 @@ sealed class GatewayWorker : BackgroundService
             ["AccessCode"] = code
         });
         matched["Uses"] = (matched["Uses"]?.GetValue<int>() ?? 0) + 1;
-        await File.WriteAllTextAsync(dataFile, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+        var tmp = dataFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+            File.Move(tmp, dataFile, true);
+        }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
         await Write(ctx, SuccessHtml(groupName, minutes), "text/html; charset=utf-8");
     }
 
@@ -138,7 +173,7 @@ sealed class GatewayWorker : BackgroundService
     static string PortalHtml(string error) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Restaurant Wi-Fi</title>
 <style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;margin:0;color:#111827}}.box{{max-width:420px;margin:8vh auto;background:white;border-radius:18px;padding:28px;box-shadow:0 20px 60px #0005}}h1{{margin:0 0 6px}}p{{color:#64748b}}input{{box-sizing:border-box;width:100%;padding:13px;margin:7px 0;border:1px solid #cbd5e1;border-radius:10px;font-size:16px}}button{{width:100%;padding:14px;margin-top:12px;border:0;border-radius:10px;background:#2563eb;color:white;font-size:17px;font-weight:700}}.err{{color:#b91c1c;background:#fee2e2;padding:10px;border-radius:8px}}</style></head>
 <body><div class='box'><h1>Restaurant Wi-Fi</h1><p>أدخل بياناتك وكود الدخول لتفعيل الإنترنت.</p>{(string.IsNullOrWhiteSpace(error) ? "" : $"<div class='err'>{WebUtility.HtmlEncode(error)}</div>")}
-<form method='post'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
+<form method='post' action='/activate'><input name='name' placeholder='الاسم' required><input name='phone' placeholder='رقم الهاتف' inputmode='tel' required><input name='code' placeholder='كود الدخول' required><button type='submit'>تفعيل الإنترنت</button></form></div></body></html>";
 
     static string SuccessHtml(string group, int minutes) => $@"<!doctype html><html dir='rtl' lang='ar'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{{font-family:Segoe UI,Tahoma;background:#0f172a;color:white;text-align:center;padding:12vh 20px}}.ok{{font-size:56px}}h1{{font-size:30px}}p{{color:#cbd5e1}}</style></head><body><div class='ok'>✓</div><h1>تم تفعيل الجلسة</h1><p>الباقة: {WebUtility.HtmlEncode(group)} — المدة: {minutes} دقيقة</p><p>يمكنك إغلاق هذه الصفحة.</p></body></html>";
 
