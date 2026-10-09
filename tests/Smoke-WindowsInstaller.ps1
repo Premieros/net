@@ -63,9 +63,9 @@ function InvokeIcacls([string[]]$parameters) {
 }
 # Preserve Administrator access, allow only reading as SYSTEM, then deny
 # SYSTEM permission to change the legacy file's DACL.
-InvokeIcacls @($legacyJson, '/grant:r', '*S-1-5-18:R', '*S-1-5-32-544:F')
-InvokeIcacls @($legacyJson, '/inheritance:r')
-InvokeIcacls @($legacyJson, '/deny', '*S-1-5-18:WDAC')
+InvokeIcacls -parameters @($legacyJson, '/grant:r', '*S-1-5-18:R', '*S-1-5-32-544:F')
+InvokeIcacls -parameters @($legacyJson, '/inheritance:r')
+InvokeIcacls -parameters @($legacyJson, '/deny', '*S-1-5-18:(WDAC)')
 $expectedLegacyHash = (Get-FileHash -LiteralPath $legacyJson -Algorithm SHA256).Hash
 $expectedLegacyAcl = (Get-Acl -LiteralPath $legacyJson).Sddl
 Write-Host 'Legacy JSON test fixture: SYSTEM can read the file but may not change its DACL.'
