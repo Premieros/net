@@ -23,6 +23,16 @@ does not yet intercept/deny internet packets, enable NAT/ICS, disconnect clients
 apply per-client speed limits. Do **not** use as a secure captive portal until a verified Windows
 network admission backend exists and is tested against the actual hardware.
 
+## Wired router uplink setup (LAN cable)
+
+1. Plug the internet-providing router into the PC's Ethernet port.
+2. For an external access point, connect a **second** PC Ethernet port (USB-to-Ethernet is acceptable) to the AP in bridge/AP mode. Alternatively, use a Windows Wi-Fi adapter for the PC-hosted hotspot.
+3. In the Windows administration app, open **الإعدادات → توصيل الشبكة**.
+4. Select the router-facing Ethernet adapter, the downstream Ethernet/Wi-Fi adapter, and the client distribution mode. Use **فحص المسار** to review adapter IP and router gateway information.
+5. Saving this selection is **diagnostic and configuration only**: it does not enable Internet Connection Sharing, NAT, DHCP, firewall enforcement, captive portal interception, bandwidth shaping or quota enforcement.
+
+The Windows networking backend must still be implemented and verified before using this app to restrict customer internet access.
+
 ## Projects
 - `src/RestaurantWiFiControl`: WinForms management interface
 - `src/RestaurantWiFiGateway`: Windows portal and logical session handling
