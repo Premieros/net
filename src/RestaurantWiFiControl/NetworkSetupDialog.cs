@@ -171,13 +171,16 @@ internal sealed class NetworkSetupDialog : Form
             mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
                 ClientAccessMode.ExternalAccessPointBridge, true);
         var result = TopologyValidator.Assess(topology, detected);
+        var safety = GatewayPreflight.Check(topology, detected);
         diagnostic.Text = osText + "مدخل الإنترنت: " + uplink.Name + "\r\n" +
                           "عنوان المدخل: " + (uplink.Ipv4Address ?? "غير معروف") + "\r\n" +
                           "راوتر المصدر: " + (uplink.Ipv4Gateway ?? "غير معروف") + "\r\n" +
                           "مخرج العملاء: " + downlink.Name + "\r\n" +
                           "عنوان المخرج: " + (downlink.Ipv4Address ?? "غير معروف") + "\r\n\r\n" +
-                          "تقييم التوصيل: " + (result.ConfigurationConsistent ? "مبدئيًا مناسب" : "غير مناسب") +
-                          "\r\n" + result.Explanation + "\r\n\r\n" +
+                          "تقييم التوصيل: " + (safety.WiringAppearsValid ? "مبدئيًا مناسب" : "يحتاج تصحيح") +
+                          "\r\n" + result.Explanation +
+                          (safety.Issues.Count == 0 ? "" : "\r\nمشكلات مكتشفة:\r\n- " +
+                              string.Join("\r\n- ", safety.Issues)) + "\r\n\r\n" +
                           "تنبيه: لم يتم التأكد من NAT/DHCP أو بوابة العملاء أو فرض حجب الإنترنت.";
     }
 
@@ -192,11 +195,11 @@ internal sealed class NetworkSetupDialog : Form
         }
         var intendedMode = mode.SelectedIndex == 1 ? ClientAccessMode.WindowsHostedHotspot :
             ClientAccessMode.ExternalAccessPointBridge;
-        var assessment = TopologyValidator.Assess(
+        var preflight = GatewayPreflight.Check(
             new WindowsSharingTopology(uplink.Id, downlink.Id, intendedMode, true), detected);
-        if (!assessment.ConfigurationConsistent)
+        if (!preflight.WiringAppearsValid)
         {
-            MessageBox.Show("لا يمكن حفظ مسار غير صالح:\n" + assessment.Explanation,
+            MessageBox.Show("لا يمكن حفظ مسار غير صالح:\n" + string.Join("\n", preflight.Issues),
                 "تحقق من توصيل الشبكة", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
