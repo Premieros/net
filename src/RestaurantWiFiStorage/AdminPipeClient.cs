@@ -1,11 +1,12 @@
+using System.Buffers.Binary;
 using System.IO.Pipes;
 using System.Text.Json;
 
 namespace RestaurantWiFiStorage;
 
 /// <summary>
-/// Privileged Windows administrator client. The Windows service owns the SQLite database;
-/// this process only sends allowlisted commands over a local named pipe.
+/// Privileged local administrator client. Use asynchronous I/O with an explicit timeout:
+/// PipeStream.ReadTimeout/WriteTimeout are unsupported for named-pipe streams on .NET.
 /// </summary>
 public static class AdminPipeClient
 {
@@ -14,25 +15,31 @@ public static class AdminPipeClient
 
     public static AdminResponse Send(AdminRequest request)
     {
-        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
+        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut,
+            PipeOptions.Asynchronous);
         pipe.Connect(3000);
-        pipe.ReadTimeout = 5000;
-        pipe.WriteTimeout = 5000;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(7));
         var data = JsonSerializer.SerializeToUtf8Bytes(request);
         if (data.Length > 256 * 1024) throw new InvalidOperationException("Administrative request too large.");
-        using var writer = new BinaryWriter(pipe, System.Text.Encoding.UTF8, leaveOpen: true);
-        using var reader = new BinaryReader(pipe, System.Text.Encoding.UTF8, leaveOpen: true);
-        writer.Write(data.Length);
-        writer.Write(data);
-        writer.Flush();
-        var length = reader.ReadInt32();
-        if (length < 1 || length > MaxResponseBytes)
+
+        var frame = new byte[data.Length + 4];
+        BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(0, 4), data.Length);
+        data.CopyTo(frame.AsSpan(4));
+        pipe.WriteAsync(frame.AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult();
+        pipe.FlushAsync(deadline.Token).GetAwaiter().GetResult();
+
+        var header = new byte[4];
+        pipe.ReadExactlyAsync(header.AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult();
+        var length = BinaryPrimitives.ReadInt32LittleEndian(header);
+        if (length is < 1 or > MaxResponseBytes)
             throw new IOException("Unexpected administrative response size.");
-        var bytes = reader.ReadBytes(length);
-        if (bytes.Length != length) throw new EndOfStreamException("Incomplete administrative response.");
+
+        var bytes = new byte[length];
+        pipe.ReadExactlyAsync(bytes.AsMemory(), deadline.Token).AsTask().GetAwaiter().GetResult();
         var response = JsonSerializer.Deserialize<AdminResponse>(bytes) ??
             throw new IOException("Empty administrative response.");
-        if (!response.Success) throw new InvalidOperationException(response.Error ?? "Administrative operation failed.");
+        if (!response.Success)
+            throw new InvalidOperationException(response.Error ?? "Administrative operation failed.");
         return response;
     }
 }
