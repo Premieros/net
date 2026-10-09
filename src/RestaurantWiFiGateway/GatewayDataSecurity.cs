@@ -3,60 +3,87 @@ using System.Diagnostics;
 namespace RestaurantWiFiGateway;
 
 /// <summary>
-/// Restrict ProgramData data to SYSTEM and local Administrators before creating SQLite.
-/// Windows service must run elevated (normally as LocalSystem).
+/// Keep the Gateway SQLite data private to SYSTEM and local Administrators.
+/// Do NOT recursively rewrite ACLs on unrelated/legacy user files: old
+/// v9-data.json can have a protected DACL from a prior installation, and
+/// icacls /T used to crash the Windows service during every startup.
 /// </summary>
 internal static class GatewayDataSecurity
 {
+    private static readonly string[] SqliteFileSuffixes =
+        ["", "-wal", "-shm", "-journal"];
+
     public static void Protect()
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Gateway data permissions require Windows.");
+
         var folder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Restaurant WiFi Control");
-        Directory.CreateDirectory(folder);
-        var root = new DirectoryInfo(folder);
-        var candidates = new List<FileSystemInfo> { root };
-        candidates.AddRange(root.EnumerateFileSystemInfos("*", SearchOption.AllDirectories));
-        if (candidates.Any(x => (x.Attributes & FileAttributes.ReparsePoint) != 0))
-            throw new IOException("Refusing to configure ACLs when data directory contains reparse points.");
 
-        // SID form works on English and non-English Windows installations.
-        // Grant first so the service never locks itself out while removing inherited grants.
-        // icacls (OI)(CI)F ACEs are inherited by children but can be
-        // inherit-only on *existing files*. Removing inheritance before
-        // applying an explicit file ACE leaves an EMPTY DACL on SQLite files,
-        // which makes LocalSystem fail to open wifi-state.db (SQLite Error 14).
-        //
-        // Always grant non-inheriting F to every existing file FIRST, then
-        // turn off inheritance. Do not expose SQLite to Users or Everyone.
-        Run(folder, "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T", "/Q");
-        Run(folder, "/grant", "*S-1-5-18:F", "*S-1-5-32-544:F", "/T", "/Q");
-        Run(folder, "/inheritance:r", "/T", "/Q");
-        Run(folder, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545", "/T", "/Q");
+        Directory.CreateDirectory(folder);
+        if (IsReparsePoint(folder))
+            throw new IOException("Refusing to use a reparse-point Gateway data directory.");
+
+        // First repair any EXISTING database file ACLs, before tightening the
+        // directory. Only files owned by the gateway database may be modified.
+        // Never touch v9-data.json or its backup: these are immutable migration inputs.
+        foreach (var suffix in SqliteFileSuffixes)
+        {
+            var file = Path.Combine(folder, "wifi-state.db" + suffix);
+            if (!File.Exists(file)) continue;
+            if (IsReparsePoint(file))
+                throw new IOException("Refusing to use a reparse-point Gateway database file.");
+            ProtectExistingDatabaseFile(file);
+        }
+
+        // New DB and temporary SQLite files inherit access for SYSTEM/Admins only.
+        // NO /T flag: recursively applying icacls to old user-owned JSON was the
+        // cause of Windows Event 1026 (IOException/Access denied) on user hardware.
+        Run(folder, "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F");
+        Run(folder, "/grant", "*S-1-5-18:F", "*S-1-5-32-544:F");
+        Run(folder, "/inheritance:r");
+        Run(folder, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545");
+
+        // SQLite files created previously remain explicitly protected.
+        // A legacy file with an inaccessible DACL will now be left untouched
+        // until the migration layer specifically needs to read it.
     }
 
-    static void Run(string folder, params string[] options)
+    private static void ProtectExistingDatabaseFile(string file)
+    {
+        Run(file, "/grant:r", "*S-1-5-18:F", "*S-1-5-32-544:F");
+        Run(file, "/inheritance:r");
+        Run(file, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545");
+    }
+
+    private static bool IsReparsePoint(string path) =>
+        (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+    private static void Run(string target, params string[] arguments)
     {
         var processInfo = new ProcessStartInfo
         {
-            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "icacls.exe"),
+            FileName = Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.System), "icacls.exe"),
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        processInfo.ArgumentList.Add(folder);
-        foreach (var value in options) processInfo.ArgumentList.Add(value);
+        processInfo.ArgumentList.Add(target);
+        foreach (var argument in arguments) processInfo.ArgumentList.Add(argument);
+
         using var process = Process.Start(processInfo) ??
             throw new IOException("Cannot start Windows ACL tool.");
+
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         if (!process.WaitForExit(15_000) || process.ExitCode != 0)
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
-            throw new IOException("Cannot protect Gateway data directory: " + stderr + stdout);
+            throw new IOException("Cannot protect Gateway SQLite data: " + stderr + stdout);
         }
     }
 }
