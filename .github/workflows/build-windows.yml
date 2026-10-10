@@ -52,6 +52,13 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o installer/gateway
 
+      - name: Smoke-test native Windows WFP per-client filter transactions (synthetic adapters)
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          & installer/gateway/RestaurantWiFiGateway.exe --wfp-smoke
+          if ($LASTEXITCODE -ne 0) { throw "WFP smoke test failed: exit code $LASTEXITCODE" }
+
       - name: Smoke-test Windows Gateway admin IPC
         shell: pwsh
         run: ./tests/Smoke-WindowsGateway.ps1
