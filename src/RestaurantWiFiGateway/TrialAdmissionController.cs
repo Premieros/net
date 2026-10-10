@@ -82,10 +82,16 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                 throw new InvalidOperationException(
                     "WFP policy update failed in this trial. Start a NEW trial; prior block confirmation is invalid.");
             failedTrialDeadline = null;
-            var wan = selected.Wan ?? throw new InvalidOperationException("Missing upstream interface.");
-            if (selected.AccessPoints.Count != 1)
-                throw new InvalidOperationException("Trial must target one selected Hotspot/AP only.");
-
+            // Invalid or expired reconfiguration must revoke existing grants,
+            // not merely throw while the previous WFP trial remains active.
+            if (selected.Wan is null || selected.AccessPoints.Count != 1 ||
+                endsAt <= clock.GetUtcNow())
+            {
+                MarkPolicyFailure();
+                throw new InvalidOperationException(
+                    "Invalid or expired WFP trial topology; previous permits revoked.");
+            }
+            var wan = selected.Wan;
             var downstream = selected.AccessPoints[0];
             // Reject unsafe topology BEFORE any native WFP policy is changed.
             // This protects the experimental path from accidental subnet overlap,
