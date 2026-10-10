@@ -54,6 +54,13 @@ public sealed class SessionRevocationService
                         c["SessionStatus"]?.GetValue<string>() == "revocation-required");
                 if (client is null) return false;
                 client["Connected"] = false;
+                // Clearing an individual native WFP permit must also clear
+                // its stored rule-installed flag, not merely the UI status.
+                if (client["ExperimentalIpv4Trial"]?.GetValue<bool>() == true)
+                {
+                    client["NetworkRuleInstalled"] = false;
+                    client["TrafficVerified"] = false;
+                }
                 client["SessionStatus"] = "expired";
                 return true;
             });

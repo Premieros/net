@@ -364,6 +364,59 @@ try
     Check(codesAfter.Count == 1 && codesAfter[0]!["Uses"]!.GetValue<int>() == 1,
         "Denied attempts do not change the committed usage count");
 
+    // A fake time-limited admission controller checks DATABASE semantics:
+    // committing a temporary rule MUST NOT claim real phone connectivity.
+    var trialCodeNode = new JsonObject
+    {
+        ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
+        ["Code"] = "876543", ["MaxUses"] = 1, ["Uses"] = 0, ["Enabled"] = true
+    };
+    var trialCodeOther = new JsonObject
+    {
+        ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
+        ["Code"] = "876544", ["MaxUses"] = 1, ["Uses"] = 0, ["Enabled"] = true
+    };
+    AdminStateCommands.Execute(adminStore, new AdminRequest("add_codes", new JsonObject
+    {
+        ["GroupId"] = groupId,
+        ["Codes"] = new JsonArray(trialCodeNode, trialCodeOther)
+    }));
+    var fakeTrial = new FakeTrialAdmissionController();
+    var testRedeem = await new AccessRedemptionService(adminStore, fakeTrial)
+        .RedeemAsync(new RedemptionRequest("Trial Guest", "555999000", "876543",
+            "192.0.2.91", "synthetic-trial-device"));
+    var trialRecord = JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "876543");
+    Check(testRedeem.Success && !trialRecord["Connected"]!.GetValue<bool>() &&
+        trialRecord["NetworkRuleInstalled"]!.GetValue<bool>() &&
+        !trialRecord["TrafficVerified"]!.GetValue<bool>() &&
+        trialRecord["SessionStatus"]!.GetValue<string>() == "trial-rule-installed-unverified",
+        "Experimental permit is stored as installed-but-unverified, never as phone Connected");
+    var conflictTrial = await new AccessRedemptionService(adminStore, fakeTrial)
+        .RedeemAsync(new RedemptionRequest("Second Trial", "555999001", "876544",
+            "192.0.2.91", "same-source-address"));
+    Check(!conflictTrial.Success && JsonNode.Parse(adminStore.Read())!["Codes"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["Code"]!.GetValue<string>() == "876544")
+        ["Uses"]!.GetValue<int>() == 0,
+        "Unverified rule still blocks duplicate voucher use on the same source IPv4");
+    adminStore.Update(root =>
+    {
+        var trial = root["Clients"]!.AsArray().OfType<JsonObject>()
+            .Single(c => c["AccessCode"]!.GetValue<string>() == "876543");
+        trial["SessionExpiresAt"] = "2020-01-01T00:00:00Z";
+        return true;
+    });
+    Check(adminStore.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow)) >= 1,
+        "Short-lived experimental rule enters revocation despite Connected=false");
+    Check(await new SessionRevocationService(adminStore, fakeTrial).ReconcileAsync() >= 1,
+        "Time-limited trial rule can be revoked independently");
+    trialRecord = JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "876543");
+    Check(!trialRecord["Connected"]!.GetValue<bool>() &&
+        !trialRecord["NetworkRuleInstalled"]!.GetValue<bool>() &&
+        trialRecord["SessionStatus"]!.GetValue<string>() == "expired",
+        "Successful native trial revoke clears stored source IPv4 authorization flag");
+
     var concurrentCode = new JsonObject
     {
         ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
@@ -479,6 +532,18 @@ try
 finally
 {
     try { Directory.Delete(dir, recursive: true); } catch { }
+}
+
+sealed class FakeTrialAdmissionController : ITimeLimitedTrialAdmissionController
+{
+    public DateTimeOffset TrialEndsAt { get; } = DateTimeOffset.UtcNow.AddSeconds(90);
+    public bool IsEnforcementReady => true;
+    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client, DateTimeOffset expiresAt,
+        CancellationToken token = default) =>
+        ValueTask.FromResult(new AdmissionResult(true, "synthetic WFP rule"));
+    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default) =>
+        ValueTask.FromResult(new AdmissionResult(true, "synthetic WFP revoke"));
 }
 
 sealed class FakeAdmissionController : INetworkAdmissionController
