@@ -137,6 +137,14 @@ internal static class WfpInteropSmoke
         Console.WriteLine("NOTE: Does not establish client Internet reachability, fail-closed safety, or paid Wi-Fi readiness.");
     }
 
+    sealed class TrialSmokeClock : TimeProvider
+    {
+        DateTimeOffset now;
+        public TrialSmokeClock(DateTimeOffset initial) => now = initial;
+        public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan interval) => now = now.Add(interval);
+    }
+
     static void Assert(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException("WFP interop smoke: " + message);
