@@ -96,7 +96,7 @@ internal static class WfpInteropSmoke
                 "Gateway and external IP addresses cannot be granted as clients");
 
             var grantedA = admission.GrantAsync(
-                new RestaurantWiFiNetworking.ClientIdentity(first), end).GetAwaiter().GetResult();
+                new RestaurantWiFiNetworking.ClientIdentity(first.ToString()), end).GetAwaiter().GetResult();
             Assert(grantedA.Enforced, "Phone A's individual IP grant is committed by real WFP");
 
             var grantedB = admission.GrantAsync(
@@ -111,7 +111,7 @@ internal static class WfpInteropSmoke
                 "Controller and native WFP agree that exactly two IPs are permitted");
 
             var revokedA = admission.RevokeAsync(
-                new RestaurantWiFiNetworking.ClientIdentity(first)).GetAwaiter().GetResult();
+                new RestaurantWiFiNetworking.ClientIdentity(first.ToString())).GetAwaiter().GetResult();
             Assert(revokedA.Enforced, "Phone A can be independently revoked");
             snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
             permitted = snapshot.GetProperty("authorizedClientIps").EnumerateArray()
