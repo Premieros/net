@@ -87,6 +87,16 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                 throw new InvalidOperationException("Trial must target one selected Hotspot/AP only.");
 
             var downstream = selected.AccessPoints[0];
+            // Reject unsafe topology BEFORE any native WFP policy is changed.
+            // This protects the experimental path from accidental subnet overlap,
+            // host-wide scope, invalid masks and swapped adapter selections.
+            var safety = PersistentGuardTopology.Validate(
+                new PersistentGuardTopology.Selection(
+                    wan.InterfaceIndex, downstream.InterfaceIndex,
+                    downstream.Ipv4, downstream.Mask, wan.Ipv4));
+            if (!safety.SafeToStage)
+                throw new InvalidOperationException(
+                    "Unsafe selected WFP topology: " + safety.Reason);
             // A previously authorized IP cannot survive a network address/subnet
             // change or withdrawal of the operator's manual block confirmation.
             var nextPath = wan.InterfaceIndex + ":" + wan.Ipv4 + ":" +
