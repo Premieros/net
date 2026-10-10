@@ -378,6 +378,14 @@ try
         .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "123456")
         ["Connected"]!.GetValue<bool>(),
         "Missing network provider cannot mark a client disconnected");
+    var refusedRevocationController = new FakeAdmissionController(true, revokeAllowed: false);
+    Check(await new SessionRevocationService(adminStore, refusedRevocationController)
+            .ReconcileAsync() == 0 &&
+          JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+            .OfType<JsonObject>().Single(c => c["AccessCode"]!.GetValue<string>() == "123456")
+            ["SessionStatus"]!.GetValue<string>() == "revocation-required",
+        "Failed WFP revoke remains pending and cannot be reported as disconnected");
+
     var revocationController = new FakeAdmissionController(true);
     Check(await new SessionRevocationService(adminStore, revocationController).ReconcileAsync() == 1,
         "Confirmed network rule revocation finalizes expired session");
@@ -437,9 +445,14 @@ finally
 sealed class FakeAdmissionController : INetworkAdmissionController
 {
     readonly bool allow;
+    readonly bool revokeAllowed;
     int count;
 
-    public FakeAdmissionController(bool allow) => this.allow = allow;
+    public FakeAdmissionController(bool allow, bool revokeAllowed = true)
+    {
+        this.allow = allow;
+        this.revokeAllowed = revokeAllowed;
+    }
     public bool IsEnforcementReady => true;
     public int GrantCount => count;
 
@@ -452,5 +465,6 @@ sealed class FakeAdmissionController : INetworkAdmissionController
 
     public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
         CancellationToken token = default) =>
-        ValueTask.FromResult(new AdmissionResult(true, "revoked"));
+        ValueTask.FromResult(new AdmissionResult(revokeAllowed,
+            revokeAllowed ? "revoked" : "native WFP revoke rejected"));
 }
