@@ -203,7 +203,10 @@ sealed class GatewayWorker : BackgroundService
         }
 
         var values = ParseForm(Encoding.UTF8.GetString(buffer.ToArray()));
-        var ip = ctx.Request.RemoteEndPoint?.Address.ToString() ?? "";
+        // HttpListener can report IPv4 peers as IPv4-mapped IPv6. Always
+        // authorize the canonical source IPv4 seen by the gateway, never an
+        // IP supplied in a form field or proxy header.
+        ClientIpv4Source.TryNormalize(ctx.Request.RemoteEndPoint?.Address, out var ip);
         var now = DateTimeOffset.UtcNow;
         foreach (var old in lastAttempt.Where(x => x.Value < now.AddMinutes(-2))
             .Select(x => x.Key).ToArray()) lastAttempt.Remove(old);
