@@ -7,6 +7,14 @@ using RestaurantWiFiStorage;
 using RestaurantWiFiGateway;
 using RestaurantWiFiNetworking;
 
+// Opt-in CI self-test: never starts the service or touches customer data.
+// Synthetic adapter indices cannot match any real network interface.
+if (args.Length == 1 && args[0] == "--wfp-smoke")
+{
+    WfpInteropSmoke.Run();
+    return;
+}
+
 try { GatewayDataSecurity.Protect(); }
 catch (Exception ex)
 {
