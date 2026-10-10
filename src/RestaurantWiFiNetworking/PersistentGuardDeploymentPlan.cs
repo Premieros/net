@@ -34,8 +34,7 @@ public static class PersistentGuardDeploymentPlan
             Step.VerifyCommittedFilters,
             Step.VerifyRestartSurvival,
             Step.VerifyPacketBlocking,
-            Step.VerifyIdentityBinding,
-            Step.EnableAdmission
+            Step.VerifyIdentityBinding
         });
 
     public sealed record ExecutionState(
