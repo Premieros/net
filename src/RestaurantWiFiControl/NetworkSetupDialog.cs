@@ -1,5 +1,6 @@
 using RestaurantWiFiNetworking;
 using RestaurantWiFiStorage;
+using System.Text.Json;
 
 namespace RestaurantWiFiControl;
 
@@ -83,8 +84,9 @@ internal sealed class NetworkSetupDialog : Form
         var scan = new Button { Text = "تحديث الكروت", Width = 135, Height = 35 };
         var inspect = new Button { Text = "فحص المسار", Width = 135, Height = 35 };
         var save = new Button { Text = "حفظ الاختيارات", Width = 145, Height = 35 };
+        var inspectPolicy = new Button { Text = "حالة الحجب والأكواد", Width = 170, Height = 35 };
         var close = new Button { Text = "إغلاق", Width = 105, Height = 35 };
-        actions.Controls.AddRange(new Control[] { scan, inspect, save, close });
+        actions.Controls.AddRange(new Control[] { scan, inspect, save, inspectPolicy, close });
         root.Controls.Add(actions, 0, 7);
 
         var trialActions = new FlowLayoutPanel
@@ -105,8 +107,52 @@ internal sealed class NetworkSetupDialog : Form
         scan.Click += (_, _) => Scan();
         inspect.Click += (_, _) => Report();
         save.Click += (_, _) => SaveSelection();
+        inspectPolicy.Click += async (_, _) => await ShowTrialPolicyStatus();
         close.Click += (_, _) => Close();
         Scan();
+    }
+
+    /// <summary>
+    /// Read-only snapshot from the LOCAL Windows gateway. Eliminates the need
+    /// for operators to copy PowerShell commands merely to inspect rule counts.
+    /// No traffic tests or network configuration changes are made here.
+    /// </summary>
+    async Task ShowTrialPolicyStatus()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            using var response = await client.GetAsync("http://127.0.0.1:8765/status/");
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = document.RootElement;
+            var state = root.GetProperty("experimentalWfp").GetProperty("State").GetString() ?? "unknown";
+            var ready = root.GetProperty("ipv4CodeTrialReady").GetBoolean();
+            var trial = root.GetProperty("ipv4TrialPolicy");
+            var active = trial.GetProperty("ruleEngineActive").GetBoolean();
+            var count = trial.GetProperty("installedFilterCount").GetInt32();
+            var clients = trial.GetProperty("authorizedClientIps").EnumerateArray()
+                .Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray();
+            var expiry = trial.GetProperty("endsUtc");
+            var expiryText = expiry.ValueKind == JsonValueKind.String ?
+                expiry.GetString() : "لا يوجد اختبار نشط";
+            var message = "حالة WFP: " + state +
+                "\nالقواعد المثبتة: " + count +
+                "\nالمحرك نشط: " + (active ? "نعم" : "لا") +
+                "\nالسماح بالكود جاهز: " + (ready ? "نعم (تجريبي)" : "لا") +
+                "\nعناوين الأجهزة المسموحة (" + clients.Length + "): " +
+                    (clients.Length == 0 ? "لا يوجد" : string.Join(", ", clients)) +
+                "\nانتهاء الاختبار: " + expiryText +
+                "\n\nتنبيه: هذه بيانات القواعد المثبتة فقط؛ لا تثبت أن الإنترنت يعمل على الهاتف.";
+            MessageBox.Show(this, message, "تشخيص محلي تلقائي — IPv4 تجريبي",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "تعذر قراءة حالة خدمة Gateway المحلية. " +
+                "تحقق أن الخدمة تعمل. التفاصيل: " + ex.Message,
+                "فحص الخدمة", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     static Control Field(string label, Control input)
