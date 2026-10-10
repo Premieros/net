@@ -307,7 +307,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
             {
                 var subLayer = new FwpmSublayer0
                 {
-                    subLayerKey = subLayerKey,
+                    subLayerKey = this.subLayerKey,
                     displayData = new FwpmDisplayData0 { name = subName, description = subDescription },
                     weight = 0x7000
                 };
@@ -390,7 +390,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
                 filterKey = Guid.NewGuid(),
                 displayData = new FwpmDisplayData0 { name = namePtr, description = descriptionPtr },
                 layerKey = LayerIpForwardV4,
-                subLayerKey = subLayerKey,
+                subLayerKey = this.subLayerKey,
                 weight = new FwpValue0
                 {
                     type = FwpDataType.Uint8,
