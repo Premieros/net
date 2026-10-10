@@ -149,6 +149,17 @@ sealed class GatewayWorker : BackgroundService
                     {
                         portal = "portal-ready",
                         admissionReady = false, // Production admission remains unimplemented.
+                        productionSafety = new
+                        {
+                            readyForPayingGuests = false,
+                            permanentFailClosedDeny = false,
+                            ipv6Enforced = false,
+                            antiIpSpoofing = false,
+                            deviceIdentityVerified = false,
+                            byteQuotasEnforced = false,
+                            speedLimitsEnforced = false,
+                            realPhonePermitTrafficVerified = false
+                        },
                         ipv4CodeTrialReady = admission.IsEnforcementReady,
                         ipv4TrialPolicy = trialAdmission.Snapshot(),
                         experimentalWfp = trialStatus.Current
