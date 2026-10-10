@@ -146,6 +146,24 @@ internal static class WfpInteropSmoke
             Assert(permittedAgain.Enforced,
                 "New authorization works after fresh confirmation without retaining old grants");
 
+            var readdressed = new NetworkTopologySnapshot
+            {
+                Wan = selected.Wan,
+                AccessPoints = new List<NetworkAdapterSnapshot>
+                {
+                    new()
+                    {
+                        InterfaceIndex = fictitiousAp, Ipv4 = "192.168.138.1",
+                        Mask = "255.255.255.0", IsUp = true
+                    }
+                }
+            };
+            admission.Apply(readdressed, end, blockObserved: true);
+            snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            Assert(snapshot.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
+                   snapshot.GetProperty("installedFilterCount").GetInt32() == 1,
+                "Subnet change invalidates previous device grants without unlocking all clients");
+
             admission.Stop();
             Assert(!admission.IsEnforcementReady &&
                 System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot())
