@@ -323,6 +323,15 @@ try
     {
         ["GroupId"] = groupId, ["Codes"] = new JsonArray(concurrentCode)
     }));
+    var sharedIpAttempt = await new AccessRedemptionService(adminStore,
+        new FakeAdmissionController(true)).RedeemAsync(
+            new RedemptionRequest("Another Guest", "123450000", "654321",
+                "192.0.2.5", "different-device-same-IP"));
+    var afterSharedIpAttempt = JsonNode.Parse(adminStore.Read())!["Codes"]!.AsArray()
+        .OfType<JsonObject>().Single(x => x["Code"]!.GetValue<string>() == "654321");
+    Check(!sharedIpAttempt.Success && afterSharedIpAttempt["Uses"]!.GetValue<int>() == 0,
+        "Two vouchers cannot grant the same client IP while another active session owns it");
+
     var concurrentAdmission = new FakeAdmissionController(true);
     var concurrentRedemptions = await Task.WhenAll(Enumerable.Range(0, 24).Select(i =>
         Task.Run(async () => await new AccessRedemptionService(adminStore, concurrentAdmission)
