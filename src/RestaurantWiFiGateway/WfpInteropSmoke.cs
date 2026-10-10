@@ -43,6 +43,17 @@ internal static class WfpInteropSmoke
             }
         };
 
+        // An old manual phone observation must never be reused after a
+        // failed trial. A new deadline represents a fresh operator request.
+        var latch = new TrialFailureLatch();
+        var failedEnd = DateTimeOffset.UtcNow.AddMinutes(2);
+        Assert(!latch.IsRejected(failedEnd), "Fresh trial has no failure latch");
+        Assert(latch.Reject(failedEnd) && latch.IsRejected(failedEnd),
+            "Failure invalidates this exact two-minute trial window");
+        Assert(!latch.Reject(failedEnd) &&
+               !latch.IsRejected(failedEnd.AddSeconds(1)),
+            "Retrying failed window stays rejected; new trial window can proceed");
+
         using var gate = new ExperimentalWfpForwardGate();
         var first = IPAddress.Parse("192.168.137.101");
         var second = IPAddress.Parse("192.168.137.102");
