@@ -128,8 +128,15 @@ internal sealed class NetworkSetupDialog : Form
             var root = document.RootElement;
             var state = root.GetProperty("experimentalWfp").GetProperty("State").GetString() ?? "unknown";
             var ready = root.GetProperty("ipv4CodeTrialReady").GetBoolean();
+            var commercialReady = root.TryGetProperty("productionSafety", out var safety) &&
+                safety.TryGetProperty("readyForPayingGuests", out var production) &&
+                production.GetBoolean();
+            var details = root.GetProperty("experimentalWfp")
+                .GetProperty("Message").GetString() ?? "";
             var trial = root.GetProperty("ipv4TrialPolicy");
             var active = trial.GetProperty("ruleEngineActive").GetBoolean();
+            var invalidated = trial.TryGetProperty("requiresNewTrialAfterPolicyFailure", out var failed) &&
+                failed.GetBoolean();
             var count = trial.GetProperty("installedFilterCount").GetInt32();
             var clients = trial.GetProperty("authorizedClientIps").EnumerateArray()
                 .Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray();
@@ -143,7 +150,10 @@ internal sealed class NetworkSetupDialog : Form
                 "\nعناوين الأجهزة المسموحة (" + clients.Length + "): " +
                     (clients.Length == 0 ? "لا يوجد" : string.Join(", ", clients)) +
                 "\nانتهاء الاختبار: " + expiryText +
-                "\n\nتنبيه: هذه بيانات القواعد المثبتة فقط؛ لا تثبت أن الإنترنت يعمل على الهاتف.";
+                "\nالجاهزية التجارية: " + (commercialReady ? "متحقق منها" : "غير جاهز") +
+                (invalidated ? "\nيجب بدء اختبار جديد: فشل تحديث قاعدة WFP السابقة." : "") +
+                "\nالتفاصيل: " + details +
+                "\n\nتنبيه: تثبيت القواعد ليس إثباتًا لعمل الإنترنت على الهاتف. الحماية غير دائمة.";
             MessageBox.Show(this, message, "تشخيص محلي تلقائي — IPv4 تجريبي",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
