@@ -154,7 +154,11 @@ internal static class NetworkDiscovery
 
 internal sealed class ExperimentalWfpForwardGate : IDisposable
 {
-    static readonly Guid SubLayerKey = new("a971e3df-f2e5-4ce4-86db-8dbad5b78360");
+    // Each dynamic WFP session owns its own sublayer. A fixed global key
+    // collides (FWP_E_ALREADY_EXISTS) when two gateway/test processes overlap.
+    // Random session keys avoid stale/parallel session conflicts without
+    // installing any persistent WFP objects.
+    readonly Guid subLayerKey = Guid.NewGuid();
     static readonly Guid LayerIpForwardV4 = new("a82acc24-4ee1-4ee1-b465-fd1d25cb10a4");
     static readonly Guid ConditionSourceInterfaceIndex = new("2311334d-c92d-45bf-9496-edf447820e2d");
     static readonly Guid ConditionDestinationInterfaceIndex = new("35cf6522-4139-45ee-a0d5-67b80949d879");
@@ -303,7 +307,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
             {
                 var subLayer = new FwpmSublayer0
                 {
-                    subLayerKey = SubLayerKey,
+                    subLayerKey = subLayerKey,
                     displayData = new FwpmDisplayData0 { name = subName, description = subDescription },
                     weight = 0x7000
                 };
@@ -386,7 +390,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
                 filterKey = Guid.NewGuid(),
                 displayData = new FwpmDisplayData0 { name = namePtr, description = descriptionPtr },
                 layerKey = LayerIpForwardV4,
-                subLayerKey = SubLayerKey,
+                subLayerKey = subLayerKey,
                 weight = new FwpValue0
                 {
                     type = FwpDataType.Uint8,
