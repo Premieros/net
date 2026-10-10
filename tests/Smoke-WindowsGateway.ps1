@@ -53,6 +53,10 @@ try {
         catch { Start-Sleep -Milliseconds 400 }
     }
     if (-not $status) { throw "Gateway loopback-only status endpoint did not start." }
+    if (-not $status.trialSessionAccounting -or
+        $status.trialSessionAccounting.phoneInternetReachabilityVerified -ne $false) {
+        throw "Gateway trial accounting incorrectly claimed verified phone Internet traffic."
+    }
     if ($status.admissionReady -ne $false -or
         $status.productionSafety.readyForPayingGuests -ne $false -or
         $status.productionSafety.permanentFailClosedDeny -ne $false -or

@@ -80,8 +80,20 @@ public sealed class AccessRedemptionService
                     return false;
 
                 code["Uses"] = (code["Uses"]?.GetValue<int>() ?? 0) + 1;
-                pending["Connected"] = true;
-                pending["SessionStatus"] = "network-authorized";
+                // Trial WFP API success proves a rule was committed, NOT that
+                // the customer's phone can reach the Internet.
+                if (trialUntil.HasValue)
+                {
+                    pending["Connected"] = false;
+                    pending["NetworkRuleInstalled"] = true;
+                    pending["TrafficVerified"] = false;
+                    pending["SessionStatus"] = "trial-rule-installed-unverified";
+                }
+                else
+                {
+                    pending["Connected"] = true;
+                    pending["SessionStatus"] = "network-authorized";
+                }
                 return true;
             });
             if (committed) return new(true, reservation.GroupName, reservation.Minutes);
@@ -126,7 +138,8 @@ public sealed class AccessRedemptionService
             string.Equals(c["Phone"]?.GetValue<string>(), request.Phone, StringComparison.OrdinalIgnoreCase) &&
             ((c["Connected"]?.GetValue<bool>() == true &&
               DateTimeOffset.TryParse(c["SessionExpiresAt"]?.GetValue<string>(), out var end) && end > now) ||
-             c["SessionStatus"]?.GetValue<string>() is "pending-network-authorization" or "revocation-required")))
+             c["SessionStatus"]?.GetValue<string>() is "pending-network-authorization" or
+                 "revocation-required" or "trial-rule-installed-unverified")))
             return new(false, "هذا الهاتف لديه جلسة نشطة أو قيد التفعيل.");
 
         // The IPv4 trial filters traffic by source IP, not by phone number
@@ -140,7 +153,8 @@ public sealed class AccessRedemptionService
               DateTimeOffset.TryParse(c["SessionExpiresAt"]?.GetValue<string>(), out var until) &&
               until > now) ||
              c["SessionStatus"]?.GetValue<string>() is
-                 "pending-network-authorization" or "revocation-required")))
+                 "pending-network-authorization" or "revocation-required" or
+                 "trial-rule-installed-unverified")))
             return new(false, "عنوان IP لهذا الجهاز لديه جلسة نشطة أو قيد التفعيل؛ لم يتم استخدام الكود.");
 
         var code = (root["Codes"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(c =>
@@ -183,6 +197,8 @@ public sealed class AccessRedemptionService
         if (trialUntil.HasValue)
         {
             newClient["ExperimentalIpv4Trial"] = true;
+            newClient["NetworkRuleInstalled"] = false;
+            newClient["TrafficVerified"] = false;
             newClient["TrialExpiresAt"] = expiry.ToString("O");
         }
         clients.Add(newClient);

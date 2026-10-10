@@ -162,6 +162,8 @@ sealed class GatewayWorker : BackgroundService
                         },
                         ipv4CodeTrialReady = admission.IsEnforcementReady,
                         ipv4TrialPolicy = trialAdmission.Snapshot(),
+                        trialSessionAccounting = ExperimentalTrialSessionRecovery.Summary(
+                            JsonNode.Parse(store.Read())?.AsObject()),
                         experimentalWfp = trialStatus.Current
                     }), "application/json; charset=utf-8");
                     return;

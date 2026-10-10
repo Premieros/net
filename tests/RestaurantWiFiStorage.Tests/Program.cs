@@ -58,6 +58,43 @@ try
     Check(sessionRoot["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "expired", "Expired session records lifecycle status");
     Check(sessionRoot["Clients"]![1]!["Connected"]!.GetValue<bool>(), "Unexpired sessions remain logically active");
     Check(SessionLifecycle.Expire(sessionRoot, new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 0, "Expiry is idempotent");
+    // Trial sessions distinguish WFP API grants from actual Internet access.
+    var trialState = JsonNode.Parse("""
+        {"Clients":[
+            {"ExperimentalIpv4Trial":true,"Connected":false,
+             "NetworkRuleInstalled":true,"TrafficVerified":false,
+             "SessionStatus":"trial-rule-installed-unverified",
+             "SessionExpiresAt":"2026-01-01T00:00:00Z"},
+            {"ExperimentalIpv4Trial":true,"Connected":false,
+             "SessionStatus":"pending-network-authorization"},
+            {"ExperimentalIpv4Trial":true,"Connected":true,
+             "SessionStatus":"network-authorized"},
+            {"ExperimentalIpv4Trial":false,"Connected":true,
+             "SessionStatus":"network-authorized"},
+            {"ExperimentalIpv4Trial":true,"Connected":false,
+             "SessionStatus":"trial-ended-uncontrolled"}]}
+        """)!.AsObject();
+    Check(SessionLifecycle.Expire(trialState,
+        new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)) == 1 &&
+        trialState["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "revocation-required",
+        "Experimental WFP rule expires even though phone Internet was never marked Connected");
+    var closedAt = new DateTimeOffset(2027, 1, 2, 0, 0, 0, TimeSpan.Zero);
+    Check(ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 3,
+        "Service loss reconciles pending, revoked and committed WFP trial sessions");
+    Check(trialState["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "trial-ended-uncontrolled" &&
+        trialState["Clients"]![1]!["SessionStatus"]!.GetValue<string>() == "trial-aborted-before-authorization" &&
+        trialState["Clients"]![2]!["Connected"]!.GetValue<bool>() == false &&
+        trialState["Clients"]![3]!["Connected"]!.GetValue<bool>() == true,
+        "Only temporary trial session records are cleared and non-trial sessions remain unchanged");
+    Check(ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 0,
+        "Post-crash WFP trial reconciliation is idempotent");
+    var accounting = System.Text.Json.JsonSerializer.SerializeToElement(
+        ExperimentalTrialSessionRecovery.Summary(trialState));
+    Check(accounting.GetProperty("endedUncontrolled").GetInt32() == 2 &&
+        accounting.GetProperty("pendingReservations").GetInt32() == 0 &&
+        !accounting.GetProperty("phoneInternetReachabilityVerified").GetBoolean(),
+        "Trial health separates stale sessions from packet-reachability verification");
+
     // Router is exclusively the uplink; Windows is the gateway for both downstream modes.
     var adapters = new[]
     {

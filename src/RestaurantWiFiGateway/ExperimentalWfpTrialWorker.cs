@@ -192,22 +192,10 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
     // status correction; it does NOT assert that real Internet is blocked.
     void MarkTrialEnded()
     {
-        var clients = JsonNode.Parse(store.Read())?["Clients"] as JsonArray;
-        if (clients is null || !clients.OfType<JsonObject>().Any(client =>
-            client["ExperimentalIpv4Trial"]?.GetValue<bool>() == true &&
-            client["Connected"]?.GetValue<bool>() == true)) return;
-
+        // Handle both previously committed experimental rules and requests
+        // interrupted while still reserving a disposable test voucher.
         store.Update(root =>
-        {
-            if (root["Clients"] is not JsonArray records) return false;
-            foreach (var item in records.OfType<JsonObject>().Where(client =>
-                client["ExperimentalIpv4Trial"]?.GetValue<bool>() == true &&
-                client["Connected"]?.GetValue<bool>() == true))
-            {
-                item["Connected"] = false;
-                item["SessionStatus"] = "trial-ended-uncontrolled";
-            }
-            return true;
-        });
+            ExperimentalTrialSessionRecovery.MarkUncontrolled(root, DateTimeOffset.UtcNow));
     }
+
 }
