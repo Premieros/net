@@ -5,7 +5,7 @@ using RestaurantWiFiNetworking;
 using System.Net.NetworkInformation;
 using System.Net;
 
-var count = 0;
+var count = PersistentGuardInterlockTests.Run();
 void Check(bool condition, string message)
 {
     if (!condition) throw new Exception("FAIL: " + message);
