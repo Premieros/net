@@ -84,6 +84,23 @@ internal static class PersistentGuardInterlockTests
             Check(!PersistentGuardDeploymentPlan.Evaluate(incomplete).CanEnableAdmission,
                 "missing guard deployment step denies: " + step);
         }
+        var readiness = ProductionAdmissionReadiness.Evaluate(selection, deploy, good,
+            "generation-1", now);
+        Check(readiness.Ready, "production readiness requires all three independent gates");
+        Check(!ProductionAdmissionReadiness.Evaluate(null, deploy, good,
+            "generation-1", now).Ready, "missing topology keeps production closed");
+        Check(!ProductionAdmissionReadiness.Evaluate(selection, null, good,
+            "generation-1", now).Ready, "missing deployment keeps production closed");
+        Check(!ProductionAdmissionReadiness.Evaluate(selection, deploy, null,
+            "generation-1", now).Ready, "missing WFP evidence keeps production closed");
+        Check(!ProductionAdmissionReadiness.Evaluate(selection, deploy,
+            good with { PersistentV6DenyVerified = false },
+            "generation-1", now).Ready, "IPv6 gap keeps production closed");
+        Check(!ProductionAdmissionReadiness.Evaluate(selection, deploy, good,
+            "generation-2", now).Ready, "generation drift keeps production closed");
+        Check(!ProductionAdmissionReadiness.Evaluate(selection, deploy, good,
+            "generation-1", now.AddMinutes(1)).Ready,
+            "stale observed policy keeps production closed");
         return count;
     }
 }
