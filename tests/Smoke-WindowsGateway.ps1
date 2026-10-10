@@ -41,6 +41,26 @@ try {
         Start-Sleep -Milliseconds 600
     }
     if (-not $success) { throw "Gateway admin named pipe did not respond: $lastError" }
+
+    # Check what the real HTTP status API tells the operator, without
+    # creating any test trials or opening any actual network filters.
+    $status = $null
+    for ($attempt = 0; $attempt -lt 25; $attempt++) {
+        try {
+            $status = Invoke-RestMethod 'http://127.0.0.1:8765/status/' -TimeoutSec 2
+            break
+        }
+        catch { Start-Sleep -Milliseconds 400 }
+    }
+    if (-not $status) { throw "Gateway loopback-only status endpoint did not start." }
+    if ($status.admissionReady -ne $false -or
+        $status.productionSafety.readyForPayingGuests -ne $false -or
+        $status.productionSafety.permanentFailClosedDeny -ne $false -or
+        $status.productionSafety.ipv6Enforced -ne $false -or
+        $status.productionSafety.realPhonePermitTrafficVerified -ne $false) {
+        throw "Gateway status falsely claimed commercial-ready access enforcement."
+    }
+    Write-Host 'PASS: Local HTTP health report correctly refuses commercial-readiness claims.'
 }
 finally {
     $gateway.Refresh()
