@@ -43,6 +43,25 @@ internal static class PersistentGuardInterlockTests
             "packet-block-unverified", "successful filter installation is not packet proof");
         Check(Decide(good with { IdentityBindingVerified = false }).Reason ==
             "device-identity-unverified", "IP spoofing uncertainty denies");
+        var selection = new PersistentGuardTopology.Selection(11, 22,
+            "192.168.137.1", "255.255.255.0", "10.0.0.50");
+        var valid = PersistentGuardTopology.Validate(selection);
+        Check(valid.SafeToStage && valid.DownstreamCidr == "192.168.137.0/24",
+            "selected private downstream network is correctly scoped");
+        Check(!PersistentGuardTopology.Validate(null).SafeToStage,
+            "no selected topology is rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { UpstreamIndex = 22 }).SafeToStage,
+            "same WAN and AP indices rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { DownstreamMask = "255.0.255.0" }).SafeToStage,
+            "noncontiguous downstream mask rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "8.8.8.8" }).SafeToStage,
+            "public downstream scope rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { UpstreamAddress = "192.168.137.22" }).SafeToStage,
+            "overlapping uplink subnet rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "192.168.137.0" }).SafeToStage,
+            "downstream network address rejected");
+        Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "192.168.137.255" }).SafeToStage,
+            "downstream broadcast address rejected");
         return count;
     }
 }
