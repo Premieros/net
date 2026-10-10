@@ -71,9 +71,10 @@ internal static class WfpInteropSmoke
         // and exact interface pair as production, but only synthetic NICs.
         // This proves that the controller updates its grants and filter set;
         // no packets are sent and no real adapter is affected.
-        using (var admission = new TrialAdmissionController())
+        var clock = new TrialSmokeClock(DateTimeOffset.UtcNow);
+        using (var admission = new TrialAdmissionController(clock))
         {
-            var end = DateTimeOffset.UtcNow.AddMinutes(1);
+            var end = clock.GetUtcNow().AddMinutes(1);
             admission.Apply(selected, end, blockObserved: false);
             Assert(!admission.IsEnforcementReady,
                 "Voucher admission fails closed until administrator confirms the block");
