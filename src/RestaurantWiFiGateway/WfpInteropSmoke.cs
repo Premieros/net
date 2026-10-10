@@ -181,6 +181,39 @@ internal static class WfpInteropSmoke
                     .GetProperty("installedFilterCount").GetInt32() == 0,
                 "Stopping the trial removes dynamic WFP rules and clears all permissions");
 
+            // Unsafe adapter selections must be rejected BEFORE touching WFP.
+            // Synthetic indices ensure no real host networking is affected.
+            var unsafeTopology = new NetworkTopologySnapshot
+            {
+                Wan = selected.Wan,
+                AccessPoints = new List<NetworkAdapterSnapshot>
+                {
+                    new()
+                    {
+                        InterfaceIndex = fictitiousAp,
+                        Ipv4 = "192.168.137.1",
+                        Mask = "255.0.255.0",
+                        IsUp = true
+                    }
+                }
+            };
+            var unsafeRejected = false;
+            try
+            {
+                admission.Apply(unsafeTopology, clock.GetUtcNow().AddMinutes(1),
+                    blockObserved: true);
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message.Contains("Unsafe selected WFP topology",
+                    StringComparison.Ordinal))
+            {
+                unsafeRejected = true;
+            }
+            Assert(unsafeRejected && !admission.IsEnforcementReady &&
+                System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot())
+                    .GetProperty("installedFilterCount").GetInt32() == 0,
+                "Unsafe network mask fails closed without persistent trial permits");
+
             // The old two-minute trial must not confer new permissions.
             admission.Apply(selected, DateTimeOffset.UtcNow.AddSeconds(-1),
                 blockObserved: true);
