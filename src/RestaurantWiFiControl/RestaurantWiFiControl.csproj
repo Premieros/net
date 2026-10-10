@@ -7,11 +7,15 @@
     <Nullable>enable</Nullable>
     <AssemblyName>RestaurantWiFiControl</AssemblyName>
     <RootNamespace>RestaurantWiFiControl</RootNamespace>
-    <Version>9.1.0</Version>
+    <Version>9.3.6</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../RestaurantWiFiStorage/RestaurantWiFiStorage.csproj" />
+    <ProjectReference Include="../RestaurantWiFiNetworking/RestaurantWiFiNetworking.csproj" />
+  </ItemGroup>
 </Project>

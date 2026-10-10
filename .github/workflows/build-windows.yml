@@ -3,6 +3,8 @@ name: Build Windows Installer
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +29,9 @@ jobs:
       - name: Restore gateway service
         run: dotnet restore src/RestaurantWiFiGateway/RestaurantWiFiGateway.csproj
 
+      - name: Run SQLite migration and concurrency integration tests
+        run: dotnet run --project tests/RestaurantWiFiStorage.Tests/RestaurantWiFiStorage.Tests.csproj -c Release
+
       - name: Publish self-contained Windows app
         run: >
           dotnet publish src/RestaurantWiFiControl/RestaurantWiFiControl.csproj
@@ -47,6 +52,22 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           -o installer/gateway
 
+      - name: Smoke-test native Windows WFP per-client filter transactions (synthetic adapters)
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          & installer/gateway/RestaurantWiFiGateway.exe --wfp-smoke
+          if ($LASTEXITCODE -ne 0) { throw "WFP smoke test failed: exit code $LASTEXITCODE" }
+
+      - name: Smoke-test Windows Gateway admin IPC
+        shell: pwsh
+        run: ./tests/Smoke-WindowsGateway.ps1
+
+      - name: Smoke-test real Windows Service Control Manager startup (1053 regression)
+        shell: pwsh
+        timeout-minutes: 3
+        run: ./tests/Smoke-WindowsService.ps1
+
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup --no-progress -y
@@ -55,9 +76,14 @@ jobs:
         shell: powershell
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\RestaurantWiFiControl.iss"'
 
+      - name: Smoke-test fresh and upgrade Windows installer (missing service regression)
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./tests/Smoke-WindowsInstaller.ps1
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Restaurant-WiFi-Control-V9.1-Setup
-          path: installer/output/Restaurant_WiFi_Control_V9_1_Setup.exe
+          name: Restaurant-WiFi-Control-V9.3.6-Trial-Accounting
+          path: installer/output/Restaurant_WiFi_Control_V9_3_6_Trial_Accounting_Setup.exe
           if-no-files-found: error
