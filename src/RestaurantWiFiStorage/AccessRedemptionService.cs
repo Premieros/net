@@ -30,8 +30,11 @@ public sealed class AccessRedemptionService
     {
         if (request.Name.Length is < 2 or > 100 || request.Phone.Length is < 5 or > 30 ||
             request.Code.Length is < 4 or > 32 || request.Device.Length > 512 ||
-            !System.Net.IPAddress.TryParse(request.Ip, out _))
-            return new(false, "راجع الاسم والهاتف والكود.");
+            !ClientIpv4Source.TryNormalize(request.Ip, out var sourceIp))
+            return new(false, "راجع الاسم والهاتف والكود وعنوان IPv4.");
+        // Store and compare only canonical IPv4 values; mapped forms must not
+        // create a second voucher record for the same Windows client address.
+        request = request with { Ip = sourceIp };
 
         // Mandatory: do not read or update codes unless a verified packet filter exists.
         if (!admission.IsEnforcementReady)
