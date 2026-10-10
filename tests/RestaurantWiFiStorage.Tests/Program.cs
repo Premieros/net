@@ -165,6 +165,17 @@ try
         "Older Windows 10 builds are flagged for upgrade");
     var nonWindows = WindowsCompatibility.Assess(false, 0);
     Check(!nonWindows.TargetBuildRecognized, "Non-Windows machines are not deployment targets");
+    Check(ClientIpv4Source.TryNormalize("::ffff:192.168.137.101", out var mapped) &&
+          mapped == "192.168.137.101",
+        "Windows IPv4-mapped HTTP peer maps to the correct client source IPv4");
+    Check(ClientIpv4Source.TryNormalize("192.168.137.101", out var canonical) &&
+          canonical == mapped,
+        "Native IPv4 and mapped IPv4 produce identical voucher device keys");
+    Check(!ClientIpv4Source.TryNormalize("2001:db8::123", out _) &&
+          !ClientIpv4Source.TryNormalize("0.0.0.0", out _) &&
+          !ClientIpv4Source.TryNormalize("255.255.255.255", out _),
+        "Native IPv6 and unspecified/broadcast addresses never get IPv4 voucher permits");
+
     var unconfigured = new UnconfiguredAdmissionController();
     var grant = await unconfigured.GrantAsync(new ClientIdentity("192.0.2.10"), DateTimeOffset.UtcNow.AddMinutes(10));
     Check(!grant.Enforced, "Unconfigured controller never confirms internet access");
