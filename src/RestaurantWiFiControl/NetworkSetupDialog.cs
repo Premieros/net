@@ -140,6 +140,10 @@ internal sealed class NetworkSetupDialog : Form
             var count = trial.GetProperty("installedFilterCount").GetInt32();
             var clients = trial.GetProperty("authorizedClientIps").EnumerateArray()
                 .Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToArray();
+            var accounting = root.GetProperty("trialSessionAccounting");
+            var unverifiedRules = accounting.GetProperty("ruleInstalledUnverified").GetInt32();
+            var uncontrolledSessions = accounting.GetProperty("endedUncontrolled").GetInt32();
+            var pendingTrials = accounting.GetProperty("pendingReservations").GetInt32();
             var expiry = trial.GetProperty("endsUtc");
             var expiryText = expiry.ValueKind == JsonValueKind.String ?
                 expiry.GetString() : "لا يوجد اختبار نشط";
@@ -149,6 +153,9 @@ internal sealed class NetworkSetupDialog : Form
                 "\nالسماح بالكود جاهز: " + (ready ? "نعم (تجريبي)" : "لا") +
                 "\nعناوين الأجهزة المسموحة (" + clients.Length + "): " +
                     (clients.Length == 0 ? "لا يوجد" : string.Join(", ", clients)) +
+                "\nقواعد مثبتة دون إثبات تصفح الهاتف: " + unverifiedRules +
+                "\nطلبات تفعيل تجريبية معلقة: " + pendingTrials +
+                "\nجلسات تجريبية انتهت دون تحكم: " + uncontrolledSessions +
                 "\nانتهاء الاختبار: " + expiryText +
                 "\nالجاهزية التجارية: " + (commercialReady ? "متحقق منها" : "غير جاهز") +
                 (invalidated ? "\nيجب بدء اختبار جديد: فشل تحديث قاعدة WFP السابقة." : "") +
