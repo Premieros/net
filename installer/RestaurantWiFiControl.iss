@@ -1,5 +1,5 @@
 #define MyAppName "Restaurant WiFi Control"
-#define MyAppVersion "9.3.5"
+#define MyAppVersion "9.3.6"
 #define MyAppPublisher "Premieros"
 #define MyAppExeName "RestaurantWiFiControl.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\Restaurant WiFi Control
 DefaultGroupName=Restaurant WiFi Control
 UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputDir=output
-OutputBaseFilename=Restaurant_WiFi_Control_V9_3_5_Trial_Quarantine_Setup
+OutputBaseFilename=Restaurant_WiFi_Control_V9_3_6_Trial_Accounting_Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
