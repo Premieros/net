@@ -79,18 +79,20 @@ try
         trialState["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "revocation-required",
         "Experimental WFP rule expires even though phone Internet was never marked Connected");
     var closedAt = new DateTimeOffset(2027, 1, 2, 0, 0, 0, TimeSpan.Zero);
-    Check(ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 3,
+    Check(ExperimentalTrialSessionRecovery.NeedsReconciliation(trialState) &&
+          ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 3,
         "Service loss reconciles pending, revoked and committed WFP trial sessions");
     Check(trialState["Clients"]![0]!["SessionStatus"]!.GetValue<string>() == "trial-ended-uncontrolled" &&
         trialState["Clients"]![1]!["SessionStatus"]!.GetValue<string>() == "trial-aborted-before-authorization" &&
         trialState["Clients"]![2]!["Connected"]!.GetValue<bool>() == false &&
         trialState["Clients"]![3]!["Connected"]!.GetValue<bool>() == true,
         "Only temporary trial session records are cleared and non-trial sessions remain unchanged");
-    Check(ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 0,
+    Check(!ExperimentalTrialSessionRecovery.NeedsReconciliation(trialState) &&
+          ExperimentalTrialSessionRecovery.MarkUncontrolled(trialState, closedAt) == 0,
         "Post-crash WFP trial reconciliation is idempotent");
     var accounting = System.Text.Json.JsonSerializer.SerializeToElement(
         ExperimentalTrialSessionRecovery.Summary(trialState));
-    Check(accounting.GetProperty("endedUncontrolled").GetInt32() == 2 &&
+    Check(accounting.GetProperty("endedUncontrolled").GetInt32() == 3 &&
         accounting.GetProperty("pendingReservations").GetInt32() == 0 &&
         !accounting.GetProperty("phoneInternetReachabilityVerified").GetBoolean(),
         "Trial health separates stale sessions from packet-reachability verification");

@@ -11,6 +11,14 @@ namespace RestaurantWiFiStorage;
 /// </summary>
 public static class ExperimentalTrialSessionRecovery
 {
+    public static bool NeedsReconciliation(JsonObject? root) =>
+        (root?["Clients"] as JsonArray)?.OfType<JsonObject>().Any(item =>
+            item["ExperimentalIpv4Trial"]?.GetValue<bool>() == true &&
+            (item["SessionStatus"]?.GetValue<string>() is
+                "pending-network-authorization" or "trial-rule-installed-unverified" or
+                "network-authorized" or "revocation-required" or "revocation-failed" ||
+             item["Connected"]?.GetValue<bool>() == true)) == true;
+
     public static int MarkUncontrolled(JsonObject root, DateTimeOffset now)
     {
         if (root["Clients"] is not JsonArray clients) return 0;

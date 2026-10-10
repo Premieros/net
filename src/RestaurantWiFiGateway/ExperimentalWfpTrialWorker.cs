@@ -192,8 +192,11 @@ internal sealed class ExperimentalWfpTrialWorker : BackgroundService
     // status correction; it does NOT assert that real Internet is blocked.
     void MarkTrialEnded()
     {
-        // Handle both previously committed experimental rules and requests
-        // interrupted while still reserving a disposable test voucher.
+        // Avoid writing SQLite every two seconds when there is nothing to
+        // reconcile. The mutation itself still re-checks the current state
+        // in its transaction, so this preflight is not trusted for integrity.
+        var snapshot = JsonNode.Parse(store.Read())?.AsObject();
+        if (!ExperimentalTrialSessionRecovery.NeedsReconciliation(snapshot)) return;
         store.Update(root =>
             ExperimentalTrialSessionRecovery.MarkUncontrolled(root, DateTimeOffset.UtcNow));
     }
