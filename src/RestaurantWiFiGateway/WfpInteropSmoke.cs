@@ -214,6 +214,30 @@ internal static class WfpInteropSmoke
                     .GetProperty("installedFilterCount").GetInt32() == 0,
                 "Unsafe network mask fails closed without persistent trial permits");
 
+            // Invalid reconfiguration must not preserve grants from the previous
+            // synthetic topology even if WFP was active immediately before.
+            var restoreEnd = clock.GetUtcNow().AddMinutes(1);
+            admission.Apply(selected, restoreEnd, blockObserved: true);
+            var restored = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(first.ToString()), restoreEnd)
+                .GetAwaiter().GetResult();
+            Assert(restored.Enforced, "Precondition: synthetic trial grant restored");
+            var missingWanRejected = false;
+            try
+            {
+                admission.Apply(new NetworkTopologySnapshot
+                {
+                    Wan = null,
+                    AccessPoints = selected.AccessPoints
+                }, restoreEnd, blockObserved: true);
+            }
+            catch (InvalidOperationException) { missingWanRejected = true; }
+            var afterBad = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            Assert(missingWanRejected && !admission.IsEnforcementReady &&
+                afterBad.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
+                afterBad.GetProperty("installedFilterCount").GetInt32() == 0,
+                "Missing WAN invalidates prior permits and closes dynamic WFP session");
+
             // The old two-minute trial must not confer new permissions.
             admission.Apply(selected, DateTimeOffset.UtcNow.AddSeconds(-1),
                 blockObserved: true);
