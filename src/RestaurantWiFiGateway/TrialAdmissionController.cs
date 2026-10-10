@@ -69,8 +69,13 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
             if (selected.AccessPoints.Count != 1)
                 throw new InvalidOperationException("Trial must target one selected Hotspot/AP only.");
 
-            var nextPath = wan.InterfaceIndex + ":" + selected.AccessPoints[0].InterfaceIndex;
-            if (nextPath != pathFingerprint || endsAt != end)
+            var downstream = selected.AccessPoints[0];
+            // A previously authorized IP cannot survive a network address/subnet
+            // change or withdrawal of the operator's manual block confirmation.
+            var nextPath = wan.InterfaceIndex + ":" + wan.Ipv4 + ":" +
+                downstream.InterfaceIndex + ":" + downstream.Ipv4 + ":" + downstream.Mask;
+            if (nextPath != pathFingerprint || endsAt != end ||
+                (manuallyObservedBlock && !blockObserved))
             {
                 grants.Clear();
                 pathFingerprint = nextPath;
