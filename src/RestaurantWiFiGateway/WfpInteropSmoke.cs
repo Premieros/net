@@ -111,6 +111,19 @@ internal static class WfpInteropSmoke
                 snapshot.GetProperty("installedFilterCount").GetInt32() > 2,
                 "Controller and native WFP agree that exactly two IPs are permitted");
 
+            var shortIp = IPAddress.Parse("192.168.137.103");
+            var shortGrant = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(shortIp.ToString()),
+                clock.GetUtcNow().AddSeconds(8)).GetAwaiter().GetResult();
+            Assert(shortGrant.Enforced, "Eight-second voucher installs one temporary WFP IP permit");
+            clock.Advance(TimeSpan.FromSeconds(10));
+            admission.Apply(selected, end, blockObserved: true);
+            snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            permitted = snapshot.GetProperty("authorizedClientIps").EnumerateArray()
+                .Select(x => x.GetString()).ToArray();
+            Assert(permitted.SequenceEqual(new[] { first.ToString(), second.ToString() }),
+                "Periodic reconciliation removes only expired source IP, preserving other grants");
+
             var revokedA = admission.RevokeAsync(
                 new RestaurantWiFiNetworking.ClientIdentity(first.ToString())).GetAwaiter().GetResult();
             Assert(revokedA.Enforced, "Phone A can be independently revoked");
