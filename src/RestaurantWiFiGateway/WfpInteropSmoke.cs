@@ -133,6 +133,19 @@ internal static class WfpInteropSmoke
             Assert(permitted.SequenceEqual(new[] { second.ToString() }),
                 "Revoking A preserves B and no other source IPv4 authorization");
 
+            admission.Apply(selected, end, blockObserved: false);
+            snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            Assert(!admission.IsEnforcementReady &&
+                snapshot.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
+                snapshot.GetProperty("installedFilterCount").GetInt32() == 1,
+                "Withdrawal of manual deny verification clears all active per-IP permits");
+
+            admission.Apply(selected, end, blockObserved: true);
+            var permittedAgain = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(second.ToString()), end).GetAwaiter().GetResult();
+            Assert(permittedAgain.Enforced,
+                "New authorization works after fresh confirmation without retaining old grants");
+
             admission.Stop();
             Assert(!admission.IsEnforcementReady &&
                 System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot())
