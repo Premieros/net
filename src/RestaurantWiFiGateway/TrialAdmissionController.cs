@@ -24,6 +24,18 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
     string pathFingerprint = "";
     bool manuallyObservedBlock;
     bool policyInstalled;
+    DateTimeOffset? failedTrialDeadline;
+
+    // A failed WFP transaction invalidates the operator's old observation.
+    // No automatic re-arming in the same trial window is permitted.
+    void MarkPolicyFailure()
+    {
+        failedTrialDeadline = end;
+        policyInstalled = false;
+        manuallyObservedBlock = false;
+        grants.Clear();
+        gate.Dispose();
+    }
 
     // Read-only diagnostics for the administrator's loopback status endpoint.
     // A committed WFP filter is not proof that the phone has Internet;
@@ -43,6 +55,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                     .ToArray(),
                 endsUtc = end == default ? (DateTimeOffset?)null : end,
                 operatorConfirmedDeny = manuallyObservedBlock,
+                requiresNewTrialAfterPolicyFailure = failedTrialDeadline == end && end != default,
                 internetReachabilityVerified = false
             };
         }
@@ -65,6 +78,10 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
     {
         lock (sync)
         {
+            if (endsAt == failedTrialDeadline)
+                throw new InvalidOperationException(
+                    "WFP policy update failed in this trial. Start a NEW trial; prior block confirmation is invalid.");
+            failedTrialDeadline = null;
             var wan = selected.Wan ?? throw new InvalidOperationException("Missing upstream interface.");
             if (selected.AccessPoints.Count != 1)
                 throw new InvalidOperationException("Trial must target one selected Hotspot/AP only.");
@@ -94,7 +111,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
             {
                 // The WFP filter transaction rolls back on error. Never signal
                 // that a failed policy update granted Internet.
-                policyInstalled = false;
+                MarkPolicyFailure();
                 throw;
             }
         }
@@ -148,9 +165,9 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
             {
                 if (previous.HasValue) grants[address] = previous.Value;
                 else grants.Remove(address);
-                policyInstalled = false;
+                MarkPolicyFailure();
                 return ValueTask.FromResult(new AdmissionResult(false,
-                    "WFP permit could not be committed."));
+                    "WFP permit update failed; this trial was invalidated."));
             }
         }
     }
@@ -179,8 +196,8 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
             catch
             {
                 if (previous.HasValue) grants[address] = previous.Value;
-                policyInstalled = false;
-                return ValueTask.FromResult(new AdmissionResult(false, "WFP revoke failed."));
+                MarkPolicyFailure();
+                return ValueTask.FromResult(new AdmissionResult(false, "WFP revoke failed; trial invalidated."));
             }
         }
     }
@@ -195,6 +212,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
             end = default;
             pathFingerprint = "";
             grants.Clear();
+            failedTrialDeadline = null;
             gate.Dispose();
         }
     }
