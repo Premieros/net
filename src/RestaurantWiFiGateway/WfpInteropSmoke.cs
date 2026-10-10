@@ -67,6 +67,71 @@ internal static class WfpInteropSmoke
         Assert(gate.Active && gate.InstalledFilterCount == 1,
             "Native reversion to blanket deny after removing both permits");
 
+        // End-to-end trial admission, using the very same native WFP gate
+        // and exact interface pair as production, but only synthetic NICs.
+        // This proves that the controller updates its grants and filter set;
+        // no packets are sent and no real adapter is affected.
+        using (var admission = new TrialAdmissionController())
+        {
+            var end = DateTimeOffset.UtcNow.AddMinutes(1);
+            admission.Apply(selected, end, blockObserved: false);
+            Assert(!admission.IsEnforcementReady,
+                "Voucher admission fails closed until administrator confirms the block");
+            var blockedBeforeConfirm = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(first.ToString()), end).GetAwaiter().GetResult();
+            Assert(!blockedBeforeConfirm.Enforced,
+                "Unconfirmed trial does not grant a phone Internet access");
+
+            admission.Apply(selected, end, blockObserved: true);
+            Assert(admission.IsEnforcementReady,
+                "Confirmed synthetic trial is eligible for disposable voucher admission");
+
+            var illegalGateway = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity("192.168.137.1"), end)
+                .GetAwaiter().GetResult();
+            var illegalWan = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity("198.51.100.45"), end)
+                .GetAwaiter().GetResult();
+            Assert(!illegalGateway.Enforced && !illegalWan.Enforced,
+                "Gateway and external IP addresses cannot be granted as clients");
+
+            var grantedA = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(first), end).GetAwaiter().GetResult();
+            Assert(grantedA.Enforced, "Phone A's individual IP grant is committed by real WFP");
+
+            var grantedB = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(second.ToString()), end).GetAwaiter().GetResult();
+            Assert(grantedB.Enforced, "Phone B's individual IP grant coexists with Phone A");
+
+            var snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            var permitted = snapshot.GetProperty("authorizedClientIps").EnumerateArray()
+                .Select(x => x.GetString()).ToArray();
+            Assert(permitted.SequenceEqual(new[] { first.ToString(), second.ToString() }) &&
+                snapshot.GetProperty("installedFilterCount").GetInt32() > 2,
+                "Controller and native WFP agree that exactly two IPs are permitted");
+
+            var revokedA = admission.RevokeAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(first)).GetAwaiter().GetResult();
+            Assert(revokedA.Enforced, "Phone A can be independently revoked");
+            snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            permitted = snapshot.GetProperty("authorizedClientIps").EnumerateArray()
+                .Select(x => x.GetString()).ToArray();
+            Assert(permitted.SequenceEqual(new[] { second.ToString() }),
+                "Revoking A preserves B and no other source IPv4 authorization");
+
+            admission.Stop();
+            Assert(!admission.IsEnforcementReady &&
+                System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot())
+                    .GetProperty("installedFilterCount").GetInt32() == 0,
+                "Stopping the trial removes dynamic WFP rules and clears all permissions");
+
+            // The old two-minute trial must not confer new permissions.
+            admission.Apply(selected, DateTimeOffset.UtcNow.AddSeconds(-1),
+                blockObserved: true);
+            Assert(!admission.IsEnforcementReady,
+                "Expired trials never return a code-ready state");
+        }
+
         Console.WriteLine("PASS: WFP native ABI smoke used only nonexistent synthetic interface indices.");
         Console.WriteLine("NOTE: Does not establish client Internet reachability, fail-closed safety, or paid Wi-Fi readiness.");
     }
