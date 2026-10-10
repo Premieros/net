@@ -126,6 +126,20 @@ public sealed class AccessRedemptionService
              c["SessionStatus"]?.GetValue<string>() is "pending-network-authorization" or "revocation-required")))
             return new(false, "هذا الهاتف لديه جلسة نشطة أو قيد التفعيل.");
 
+        // The IPv4 trial filters traffic by source IP, not by phone number
+        // or MAC address. Two simultaneously active vouchers on the SAME
+        // source IP would share one network permit; revoking either voucher
+        // could revoke the other. Reject the second reservation transactionally.
+        // This is a conflict check only, NOT a solution to IP spoofing.
+        if (clients.OfType<JsonObject>().Any(c =>
+            string.Equals(c["Ip"]?.GetValue<string>(), request.Ip, StringComparison.OrdinalIgnoreCase) &&
+            ((c["Connected"]?.GetValue<bool>() == true &&
+              DateTimeOffset.TryParse(c["SessionExpiresAt"]?.GetValue<string>(), out var until) &&
+              until > now) ||
+             c["SessionStatus"]?.GetValue<string>() is
+                 "pending-network-authorization" or "revocation-required")))
+            return new(false, "عنوان IP لهذا الجهاز لديه جلسة نشطة أو قيد التفعيل؛ لم يتم استخدام الكود.");
+
         var code = (root["Codes"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(c =>
             string.Equals(c["Code"]?.GetValue<string>(), request.Code, StringComparison.OrdinalIgnoreCase) &&
             c["Enabled"]?.GetValue<bool>() == true);
