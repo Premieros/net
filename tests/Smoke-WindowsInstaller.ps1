@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 $serviceName = 'RestaurantWiFiGateway'
 $helper = (Resolve-Path 'installer/StopGatewayForInstall.ps1').Path
-$installer = (Resolve-Path 'installer/output/Restaurant_WiFi_Control_V9_3_4_Automated_Expiry_Setup.exe').Path
+$installer = (Resolve-Path 'installer/output/Restaurant_WiFi_Control_V9_3_5_Trial_Quarantine_Setup.exe').Path
 $stamp = [guid]::NewGuid().ToString('n').Substring(0,8)
 $installLog = Join-Path $env:TEMP "restaurant-wifi-install-$stamp.log"
 $stopLog = Join-Path $env:TEMP "restaurant-wifi-stop-$stamp.log"

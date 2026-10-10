@@ -306,7 +306,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Restaurant Wi-Fi Control — V9.3.4 IPV4 PER-DEVICE TRIAL (Windows 10/11)";
+        Text = "Restaurant Wi-Fi Control — V9.3.5 IPV4 PER-DEVICE TRIAL (Windows 10/11)";
         Width = 1450;
         Height = 850;
         MinimumSize = new Size(1150, 680);
@@ -368,7 +368,7 @@ internal sealed class MainForm : Form
         var sidebar = new Panel { Dock = DockStyle.Right, Width = 235, BackColor = Color.FromArgb(17, 24, 39) };
         var brand = new Label
         {
-            Text = "Wi-Fi Control\nV9.3.4 IPv4 Beta",
+            Text = "Wi-Fi Control\nV9.3.5 IPv4 Beta",
             Dock = DockStyle.Top,
             Height = 95,
             ForeColor = Color.White,
