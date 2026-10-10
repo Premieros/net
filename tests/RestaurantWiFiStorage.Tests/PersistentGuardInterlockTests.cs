@@ -62,6 +62,28 @@ internal static class PersistentGuardInterlockTests
             "downstream network address rejected");
         Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "192.168.137.255" }).SafeToStage,
             "downstream broadcast address rejected");
+        var requiredSteps = PersistentGuardDeploymentPlan.Steps.ToArray();
+        var deploy = new PersistentGuardDeploymentPlan.ExecutionState(
+            requiredSteps, true, true, true);
+        Check(PersistentGuardDeploymentPlan.Evaluate(deploy).CanEnableAdmission,
+            "fully verified deployment plan is eligible for independent evidence gate");
+        Check(!PersistentGuardDeploymentPlan.Evaluate(null).CanEnableAdmission,
+            "unknown persistent deployment denies admission");
+        Check(!PersistentGuardDeploymentPlan.Evaluate(deploy with { ExplicitAdminConsent = false }).CanEnableAdmission,
+            "persistent deployment requires explicit admin authorization");
+        Check(!PersistentGuardDeploymentPlan.Evaluate(deploy with { TransactionCommitted = false }).CanEnableAdmission,
+            "partially staged WFP denies admission");
+        Check(!PersistentGuardDeploymentPlan.Evaluate(deploy with { VerifiedOutsideInstaller = false }).CanEnableAdmission,
+            "installer success alone cannot verify protection");
+        foreach (var step in requiredSteps)
+        {
+            var incomplete = deploy with
+            {
+                Completed = requiredSteps.Where(x => x != step).ToArray()
+            };
+            Check(!PersistentGuardDeploymentPlan.Evaluate(incomplete).CanEnableAdmission,
+                "missing guard deployment step denies: " + step);
+        }
         return count;
     }
 }
