@@ -120,12 +120,21 @@ sealed class GatewayWorker : BackgroundService
         {
             while (await timer.WaitForNextTickAsync(token))
             {
-                store.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow));
-                await revoker.ReconcileAsync(token);
+                // A transient SQLite/IPC/WFP error must not permanently end
+                // voucher-expiry maintenance. Retry on the next interval.
+                try
+                {
+                    store.Update(root => SessionLifecycle.Expire(root, DateTimeOffset.UtcNow));
+                    await revoker.ReconcileAsync(token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("Session maintenance will retry: " + ex);
+                }
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex) { Console.Error.WriteLine("Session maintenance stopped: " + ex); }
     }
 
     async Task Handle(HttpListenerContext ctx)
