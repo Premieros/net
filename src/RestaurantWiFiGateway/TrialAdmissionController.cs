@@ -12,6 +12,10 @@ namespace RestaurantWiFiGateway;
 /// </summary>
 internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionController, IDisposable
 {
+    readonly TimeProvider clock;
+    public TrialAdmissionController() : this(TimeProvider.System) { }
+    internal TrialAdmissionController(TimeProvider provider) => clock = provider;
+
     readonly object sync = new();
     readonly ExperimentalWfpForwardGate gate = new();
     readonly Dictionary<string, DateTimeOffset> grants = new(StringComparer.Ordinal);
@@ -33,7 +37,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                 ruleEngineActive = gate.Active,
                 installedFilterCount = gate.InstalledFilterCount,
                 authorizedClientIps = grants
-                    .Where(pair => pair.Value > DateTimeOffset.UtcNow)
+                    .Where(pair => pair.Value > clock.GetUtcNow())
                     .Select(pair => pair.Key)
                     .Order(StringComparer.Ordinal)
                     .ToArray(),
@@ -55,7 +59,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
     }
 
     bool Ready() => policyInstalled && gate.Active && manuallyObservedBlock &&
-                    topology?.Wan is not null && DateTimeOffset.UtcNow < end;
+                    topology?.Wan is not null && clock.GetUtcNow() < end;
 
     public void Apply(NetworkTopologySnapshot selected, DateTimeOffset endsAt, bool blockObserved)
     {
@@ -93,7 +97,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
 
     void RefreshFilters()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = clock.GetUtcNow();
         foreach (var key in grants.Where(p => p.Value <= now).Select(p => p.Key).ToArray())
             grants.Remove(key);
         if (topology is null || now >= end)
@@ -120,7 +124,7 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                 ip.ToString() == topology.AccessPoints[0].Ipv4)
                 return ValueTask.FromResult(new AdmissionResult(false,
                     "Client source IPv4 is not within the selected Hotspot subnet."));
-            if (expiresAt <= DateTimeOffset.UtcNow)
+            if (expiresAt <= clock.GetUtcNow())
                 return ValueTask.FromResult(new AdmissionResult(false, "Session has expired."));
 
             var address = ip.ToString();
