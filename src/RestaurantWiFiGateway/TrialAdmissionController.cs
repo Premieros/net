@@ -95,8 +95,12 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
                     wan.InterfaceIndex, downstream.InterfaceIndex,
                     downstream.Ipv4, downstream.Mask, wan.Ipv4));
             if (!safety.SafeToStage)
+            {
+                // A previously active permit must not survive an unsafe rebind.
+                MarkPolicyFailure();
                 throw new InvalidOperationException(
                     "Unsafe selected WFP topology: " + safety.Reason);
+            }
             // A previously authorized IP cannot survive a network address/subnet
             // change or withdrawal of the operator's manual block confirmation.
             var nextPath = wan.InterfaceIndex + ":" + wan.Ipv4 + ":" +
