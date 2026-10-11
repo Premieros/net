@@ -71,8 +71,24 @@ internal sealed class TrialAdmissionController : ITimeLimitedTrialAdmissionContr
         get { lock (sync) return Ready(); }
     }
 
-    bool Ready() => policyInstalled && gate.Active && manuallyObservedBlock &&
-                    topology?.Wan is not null && clock.GetUtcNow() < end;
+    bool Ready()
+    {
+        if (!policyInstalled || !gate.Active || !manuallyObservedBlock ||
+            topology?.Wan is null || clock.GetUtcNow() >= end)
+            return false;
+        try
+        {
+            // Persistent blocking filters currently have no working paired
+            // native voucher permit implementation. Never consume a code as
+            // "granted" while the permanent deny remains installed.
+            return !PersistentIpv4Guard.HasAnyInstalledFilter();
+        }
+        catch
+        {
+            // Unknown WFP state must not lead to a successful redemption.
+            return false;
+        }
+    }
 
     public void Apply(NetworkTopologySnapshot selected, DateTimeOffset endsAt, bool blockObserved)
     {
