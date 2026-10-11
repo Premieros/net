@@ -7,6 +7,26 @@ using RestaurantWiFiStorage;
 using RestaurantWiFiGateway;
 using RestaurantWiFiNetworking;
 
+// Manual lab-only operations. Installation changes persistent Windows WFP state.
+// Do not offer this as commercial protection: IPv6 and voucher permits are pending.
+if (args.Length == 2 && args[0] == "--persistent-ipv4-guard" &&
+    args[1] == "remove")
+{
+    PersistentIpv4Guard.Remove();
+    Console.WriteLine("Persistent IPv4 guard removal completed.");
+    return;
+}
+if (args.Length == 5 && args[0] == "--persistent-ipv4-guard" &&
+    args[1] == "install" && int.TryParse(args[2], out var wanIndex) &&
+    int.TryParse(args[3], out var apIndex) &&
+    args[4] == "--isolated-lab-i-accept-network-disruption")
+{
+    PersistentIpv4Guard.Install(wanIndex, apIndex);
+    Console.WriteLine("IPv4-only persistent block installed. Voucher permits are NOT active.");
+    Console.WriteLine("Rollback: --persistent-ipv4-guard remove");
+    return;
+}
+
 // Opt-in CI self-test: never starts the service or touches customer data.
 // Synthetic adapter indices cannot match any real network interface.
 if (args.Length == 1 && args[0] == "--wfp-smoke")
