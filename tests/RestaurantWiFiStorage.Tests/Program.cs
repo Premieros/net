@@ -348,6 +348,25 @@ try
     var rejected = await new AccessRedemptionService(adminStore, refusesGrant).RedeemAsync(requestForCode);
     Check(!rejected.Success && JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0,
         "Denied network grant releases reservation without consuming code");
+    // A network provider can throw AFTER installing a filter. An exception
+    // cannot be treated as proof that no grant existed.
+    var unknownGrant = new ThrowingAdmissionController();
+    var uncertain = await new AccessRedemptionService(adminStore, unknownGrant)
+        .RedeemAsync(requestForCode);
+    var uncertainRecord = JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray()
+        .OfType<JsonObject>().Single(c => c["Phone"]?.GetValue<string>() == "123456789");
+    Check(!uncertain.Success && unknownGrant.RevokeAttempts == 1 &&
+        uncertainRecord["SessionStatus"]!.GetValue<string>() == "revocation-required" &&
+        JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0,
+        "Ambiguous network grant retains revocation queue without consuming voucher");
+    // Simulate successful reconciliation for the isolated fake provider.
+    adminStore.Update(root =>
+    {
+        var pending = root["Clients"]!.AsArray().OfType<JsonObject>()
+            .Single(c => c["Phone"]?.GetValue<string>() == "123456789");
+        root["Clients"]!.AsArray().Remove(pending);
+        return true;
+    });
     var acceptsGrant = new FakeAdmissionController(true);
     var confirmed = await new AccessRedemptionService(adminStore, acceptsGrant).RedeemAsync(requestForCode);
     Check(confirmed.Success && acceptsGrant.GrantCount == 1 &&
@@ -614,4 +633,19 @@ sealed class FakeAdmissionController : INetworkAdmissionController
         CancellationToken token = default) =>
         ValueTask.FromResult(new AdmissionResult(revokeAllowed,
             revokeAllowed ? "revoked" : "native WFP revoke rejected"));
+}
+
+sealed class ThrowingAdmissionController : INetworkAdmissionController
+{
+    public int RevokeAttempts { get; private set; }
+    public bool IsEnforcementReady => true;
+    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client,
+        DateTimeOffset expiresAt, CancellationToken token = default)
+        => throw new InvalidOperationException("Native grant outcome unknown");
+    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default)
+    {
+        RevokeAttempts++;
+        return ValueTask.FromResult(new AdmissionResult(false, "unknown native revoke"));
+    }
 }
