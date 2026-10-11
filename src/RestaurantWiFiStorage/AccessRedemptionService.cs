@@ -53,14 +53,18 @@ public sealed class AccessRedemptionService
         }
         catch
         {
-            ReleaseReservation(reservation.Id);
-            return new(false, "تعذر تطبيق إذن الشبكة؛ لم يتم استهلاك الكود.");
+            // An exception does not prove that the native grant was never
+            // installed. Compensate using a fresh token even when the client
+            // request was cancelled, then retain a visible revocation record
+            // if the network backend cannot confirm cleanup.
+            await CompensateUnknownGrantAsync(reservation.Id, request.Ip);
+            return new(false, "تعذر التأكد من إذن الشبكة؛ لم يتم استهلاك الكود.");
         }
 
         if (!grant.Enforced)
         {
-            ReleaseReservation(reservation.Id);
-            return new(false, "لم يتم السماح بالإنترنت؛ الكود لا يزال متاحًا.");
+            await CompensateUnknownGrantAsync(reservation.Id, request.Ip);
+            return new(false, "لم يتم تأكيد السماح بالإنترنت؛ الكود لا يزال متاحًا.");
         }
 
         try
@@ -103,23 +107,38 @@ public sealed class AccessRedemptionService
             // Continue to compensate the network grant. Never report authorization success.
         }
 
-        // Database commit failed after the network grant: revoke the rule, preserving
-        // a visible error record if the physical revoke itself cannot be confirmed.
-        var revoked = false;
+        // Database failure after a native grant requires the same compensation.
+        await CompensateUnknownGrantAsync(reservation.Id, request.Ip);
+        return new(false, "تعذر إتمام الجلسة؛ يلزم فحص الشبكة.");
+    }
+
+    async ValueTask CompensateUnknownGrantAsync(string id, string ip)
+    {
+        bool revoked = false;
         try
         {
-            revoked = (await admission.RevokeAsync(new ClientIdentity(request.Ip), token)).Enforced;
+            // Do not forward a cancelled HTTP request token into cleanup.
+            revoked = (await admission.RevokeAsync(
+                new ClientIdentity(ip), CancellationToken.None)).Enforced;
         }
-        catch { /* A failed revoke requires administrator attention. */ }
-        if (revoked) ReleaseReservation(reservation.Id);
-        else store.Update(root =>
+        catch { /* Retain revocation-required for reconciliation. */ }
+
+        if (revoked)
+        {
+            ReleaseReservation(id);
+            return;
+        }
+
+        store.Update(root =>
         {
             var pending = (root["Clients"] as JsonArray)?.OfType<JsonObject>()
-                .FirstOrDefault(c => c["ReservationId"]?.GetValue<string>() == reservation.Id);
-            if (pending is not null) pending["SessionStatus"] = "revocation-required";
+                .FirstOrDefault(c => c["ReservationId"]?.GetValue<string>() == id);
+            if (pending is null) return false;
+            pending["SessionStatus"] = "revocation-required";
+            pending["NetworkRuleInstalled"] = true; // conservative, not proof
+            pending["Connected"] = false;
             return true;
         });
-        return new(false, "تعذر إتمام الجلسة؛ يلزم فحص الشبكة.");
     }
 
     Reservation Reserve(JsonObject root, RedemptionRequest request, DateTimeOffset now,
