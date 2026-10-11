@@ -31,17 +31,21 @@ public sealed class SessionRevocationService
                 ReservationId: c["ReservationId"]?.GetValue<string>(),
                 Ip: c["Ip"]?.GetValue<string>()))
             .Where(c => !string.IsNullOrWhiteSpace(c.ReservationId) &&
-                IPAddress.TryParse(c.Ip, out _))
+                ClientIpv4Source.TryNormalize(c.Ip ?? "", out _))
             .ToArray();
 
         var revoked = 0;
         foreach (var candidate in candidates)
         {
             token.ThrowIfCancellationRequested();
+            // Revoke the canonical source address used by WFP. Reject
+            // IPv6/unparseable records instead of targeting an unrelated rule.
+            if (!ClientIpv4Source.TryNormalize(candidate.Ip!, out var sourceIp))
+                continue;
             AdmissionResult outcome;
             try
             {
-                outcome = await admission.RevokeAsync(new ClientIdentity(candidate.Ip!), token);
+                outcome = await admission.RevokeAsync(new ClientIdentity(sourceIp), token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch { continue; }
