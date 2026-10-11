@@ -101,9 +101,9 @@ internal static class PersistentIpv4Guard
     }
 
     static void AddBlock(IntPtr engine, Guid key, Guid sublayer,
-        uint source, uint destination, string caption)
+        int source, int destination, string caption)
     {
-        var conditions = new[] { Condition(SourceIf, source), Condition(DestinationIf, destination) };
+        var conditions = new[] { Condition(SourceIf, checked((uint)source)), Condition(DestinationIf, checked((uint)destination)) };
         var length = Marshal.SizeOf<FilterCondition>();
         var ptr = Marshal.AllocHGlobal(length * conditions.Length);
         try
