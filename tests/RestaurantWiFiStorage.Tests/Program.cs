@@ -364,6 +364,29 @@ try
     Check(codesAfter.Count == 1 && codesAfter[0]!["Uses"]!.GetValue<int>() == 1,
         "Denied attempts do not change the committed usage count");
 
+    // A multi-use voucher must still respect the configured concurrent device cap.
+    var deviceCapCode = new JsonObject
+    {
+        ["Id"] = Guid.NewGuid().ToString(), ["GroupId"] = groupId,
+        ["Code"] = "135791", ["MaxUses"] = 3, ["Uses"] = 0, ["Enabled"] = true
+    };
+    AdminStateCommands.Execute(adminStore, new AdminRequest("add_codes",
+        new JsonObject { ["GroupId"] = groupId,
+            ["Codes"] = new JsonArray(deviceCapCode) }));
+    var firstDevice = await new AccessRedemptionService(adminStore, acceptsGrant)
+        .RedeemAsync(new RedemptionRequest("First Device", "909090901", "135791",
+            "198.51.100.141", "first"));
+    var countBeforeDenied = acceptsGrant.GrantCount;
+    var extraDevice = await new AccessRedemptionService(adminStore, acceptsGrant)
+        .RedeemAsync(new RedemptionRequest("Second Device", "909090902", "135791",
+            "198.51.100.142", "second"));
+    var codeAfterCap = JsonNode.Parse(adminStore.Read())!["Codes"]!.AsArray()
+        .OfType<JsonObject>().Single(x => x["Code"]!.GetValue<string>() == "135791");
+    Check(firstDevice.Success && !extraDevice.Success &&
+        acceptsGrant.GrantCount == countBeforeDenied &&
+        codeAfterCap["Uses"]!.GetValue<int>() == 1,
+        "Multi-use voucher with MaxDevices=1 cannot grant a second concurrent device");
+
     // A fake time-limited admission controller checks DATABASE semantics:
     // committing a temporary rule MUST NOT claim real phone connectivity.
     var trialCodeNode = new JsonObject
