@@ -10,6 +10,14 @@ using RestaurantWiFiNetworking;
 // Manual lab-only operations. Installation changes persistent Windows WFP state.
 // Do not offer this as commercial protection: IPv6 and voucher permits are pending.
 if (args.Length == 2 && args[0] == "--persistent-ipv4-guard" &&
+    args[1] == "status")
+{
+    Console.WriteLine(PersistentIpv4Guard.HasAnyInstalledFilter()
+        ? "Persistent IPv4 deny is installed. Voucher admission is DISABLED until a verified permit backend exists."
+        : "No Restaurant WiFi persistent IPv4 deny filters are installed.");
+    return;
+}
+if (args.Length == 2 && args[0] == "--persistent-ipv4-guard" &&
     args[1] == "remove")
 {
     PersistentIpv4Guard.Remove();
