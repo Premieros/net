@@ -238,11 +238,19 @@ internal static class WfpInteropSmoke
                 afterBad.GetProperty("installedFilterCount").GetInt32() == 0,
                 "Missing WAN invalidates prior permits and closes dynamic WFP session");
 
-            // The old two-minute trial must not confer new permissions.
-            admission.Apply(selected, DateTimeOffset.UtcNow.AddSeconds(-1),
-                blockObserved: true);
-            Assert(!admission.IsEnforcementReady,
-                "Expired trials never return a code-ready state");
+            // Expired trial is rejected explicitly, and no WFP grants remain.
+            var expiredRejected = false;
+            try
+            {
+                admission.Apply(selected, clock.GetUtcNow().AddSeconds(-1),
+                    blockObserved: true);
+            }
+            catch (InvalidOperationException) { expiredRejected = true; }
+            var expiredSnapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
+            Assert(expiredRejected && !admission.IsEnforcementReady &&
+                expiredSnapshot.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
+                expiredSnapshot.GetProperty("installedFilterCount").GetInt32() == 0,
+                "Expired trials are rejected without retaining client permits");
         }
 
         Console.WriteLine("PASS: WFP native ABI smoke used only nonexistent synthetic interface indices.");
