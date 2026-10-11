@@ -197,6 +197,7 @@ sealed class GatewayWorker : BackgroundService
                             speedLimitsEnforced = false,
                             realPhonePermitTrafficVerified = false
                         },
+                        persistentIpv4Guard = ReadPersistentGuardStatus(),
                         ipv4CodeTrialReady = admission.IsEnforcementReady,
                         ipv4TrialPolicy = trialAdmission.Snapshot(),
                         trialSessionAccounting = ExperimentalTrialSessionRecovery.Summary(
@@ -224,6 +225,36 @@ sealed class GatewayWorker : BackgroundService
         catch
         {
             try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
+        }
+    }
+
+    // Report actual WFP state, not a stale configuration flag.
+    // The status port is loopback-only; never expose native diagnostic errors
+    // or policy details to clients connected to the access point.
+    static object ReadPersistentGuardStatus()
+    {
+        try
+        {
+            bool installed = PersistentIpv4Guard.HasAnyInstalledFilter();
+            return new
+            {
+                installed,
+                voucherPermitsAvailable = false,
+                warning = installed
+                    ? "Persistent IPv4 block is present; code activation is disabled until a matching permit backend is implemented."
+                    : "Persistent IPv4 block is not installed.",
+                ipv6Protected = false
+            };
+        }
+        catch (Exception error)
+        {
+            return new
+            {
+                installed = (bool?)null,
+                voucherPermitsAvailable = false,
+                warning = "Unable to read native WFP guard status: " + error.GetType().Name,
+                ipv6Protected = false
+            };
         }
     }
 
