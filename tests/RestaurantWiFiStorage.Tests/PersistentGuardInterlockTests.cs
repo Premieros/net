@@ -109,6 +109,34 @@ internal static class PersistentGuardInterlockTests
         Check(!ProductionAdmissionReadiness.Evaluate(selection, deploy, good,
             "generation-1", now.AddMinutes(1)).Ready,
             "stale observed policy keeps production closed");
+        var fourDenyRules = (from family in Enum.GetValues<PersistentForwardPolicy.Family>()
+            from direction in Enum.GetValues<PersistentForwardPolicy.Direction>()
+            select new PersistentForwardPolicy.Rule(family, direction,
+                direction == PersistentForwardPolicy.Direction.DownstreamToUpstream ? 22 : 11,
+                direction == PersistentForwardPolicy.Direction.DownstreamToUpstream ? 11 : 22,
+                true, true, true)).ToArray();
+        Check(PersistentForwardPolicy.Validate(fourDenyRules, 11, 22).Complete,
+            "complete IPv4 and IPv6 forward baseline can pass pure preflight");
+        Check(!PersistentForwardPolicy.Validate(null, 11, 22).Complete,
+            "unknown baseline fails closed");
+        foreach (var missing in fourDenyRules)
+        {
+            Check(!PersistentForwardPolicy.Validate(
+                    fourDenyRules.Where(x => x != missing), 11, 22).Complete,
+                "missing forward deny fails closed: " + missing.Family + " " + missing.Direction);
+        }
+        Check(!PersistentForwardPolicy.Validate(fourDenyRules.Concat(
+            new[] { fourDenyRules[0] }), 11, 22).Complete,
+            "duplicate baseline rule rejected");
+        Check(!PersistentForwardPolicy.Validate(fourDenyRules.Select(
+            (r, i) => i == 0 ? r with { Persistent = false } : r), 11, 22).Complete,
+            "dynamic WFP rule cannot stand in for durable baseline");
+        Check(!PersistentForwardPolicy.Validate(fourDenyRules.Select(
+            (r, i) => i == 0 ? r with { IndependentlyVerified = false } : r), 11, 22).Complete,
+            "filter add alone cannot count as verified block");
+        Check(!PersistentForwardPolicy.Validate(fourDenyRules.Select(
+            (r, i) => i == 0 ? r with { SourceInterfaceIndex = 99 } : r), 11, 22).Complete,
+            "unexpected forwarding interface rejected");
         return count;
     }
 }
