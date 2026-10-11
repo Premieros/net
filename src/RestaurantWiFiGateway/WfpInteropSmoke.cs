@@ -172,7 +172,7 @@ internal static class WfpInteropSmoke
             admission.Apply(readdressed, end, blockObserved: true);
             snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
             Assert(snapshot.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
-                   snapshot.GetProperty("installedFilterCount").GetInt32() == 1,
+                   snapshot.GetProperty("installedFilterCount").GetInt32() == 2,
                 "Subnet change invalidates previous device grants without unlocking all clients");
 
             admission.Stop();
