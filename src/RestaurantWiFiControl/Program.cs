@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using RestaurantWiFiStorage;
+using System.Text.Json.Nodes;
 
 namespace RestaurantWiFiControl;
 
@@ -10,7 +13,14 @@ internal static class Program
     static void Main()
     {
         ApplicationConfiguration.Initialize();
-        Storage.Initialize();
+        try { Storage.Initialize(); }
+        catch (Exception ex)
+        {
+            MessageBox.Show("لم تستجب خدمة Restaurant WiFi Gateway. افتح services.msc ثم شغّل Restaurant WiFi Gateway أو أعد تشغيلها.\n" +
+                "إذا كانت تعمل، فافحص سجل تطبيقات Windows (Event Viewer) وجرّب إعادة فتح البرنامج.\n" +
+                ex.Message, "خدمة Gateway غير متاحة", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
         if (!Storage.HasPassword())
         {
             using var setup = new PasswordDialog(true);
@@ -27,6 +37,7 @@ internal sealed class AppData
     public string PasswordSalt { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public string RestaurantName { get; set; } = "Restaurant Wi-Fi Control";
+    public NetworkPreferences Network { get; set; } = new();
     public List<AccessGroup> Groups { get; set; } = new();
     public List<AccessCode> Codes { get; set; } = new();
     public List<ClientRecord> Clients { get; set; } = new();
@@ -69,58 +80,95 @@ internal sealed class ClientRecord
     public string Group { get; set; } = "";
     public double UsedMb { get; set; }
     public bool Connected { get; set; }
+    // Preserve gateway-owned session fields when the desktop app saves the shared JSON.
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> AdditionalFields { get; set; } = new();
+
+    [JsonIgnore]
+    public bool HasAuthorizedSession => Connected &&
+        AdditionalFields.TryGetValue("SessionStatus", out var status) &&
+        status.ValueKind == JsonValueKind.String &&
+        status.GetString() == "network-authorized";
 }
 
 internal static class Storage
 {
-    static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Restaurant WiFi Control");
-    static readonly string FilePath = Path.Combine(Folder, "v9-data.json");
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     public static AppData Data { get; private set; } = new();
 
     public static void Initialize()
     {
-        Directory.CreateDirectory(Folder);
-        Reload();
-
-        if (Data.Groups.Count == 0)
+        // Windows services may still be starting when the installer launches
+        // the desktop application. Retry only connection timeouts, never ACL errors.
+        for (int attempt = 0; ; attempt++)
         {
-            Data.Groups.AddRange(new[]
+            try
             {
-                new AccessGroup { Name = "العملاء", Kind = "customer", Minutes = 60, QuotaMb = 1024, DownloadMbps = 5, UploadMbps = 2, MaxDevices = 1, MaxUsesPerDevice = 2, BlockVideo = true },
-                new AccessGroup { Name = "الموظفين", Kind = "employee", Minutes = 720, QuotaMb = 4096, DownloadMbps = 10, UploadMbps = 5, MaxDevices = 1, MaxUsesPerDevice = 20, BlockVideo = false },
-                new AccessGroup { Name = "المديرين", Kind = "manager", Minutes = 1440, QuotaMb = 0, DownloadMbps = 0, UploadMbps = 0, MaxDevices = 2, MaxUsesPerDevice = 100, BlockVideo = false }
-            });
-            Save();
+                AdminPipeClient.Send(new AdminRequest("initialize"));
+                Reload();
+                return;
+            }
+            catch (TimeoutException) when (attempt < 5)
+            {
+                Thread.Sleep(1200);
+            }
         }
     }
 
     public static void Reload()
     {
-        if (!File.Exists(FilePath)) return;
-        try
-        {
-            Data = JsonSerializer.Deserialize<AppData>(File.ReadAllText(FilePath), JsonOptions) ?? new AppData();
-        }
-        catch
-        {
-            // Keep the current in-memory snapshot if the gateway is writing the file at the same moment.
-        }
+        var snapshot = AdminPipeClient.Send(new AdminRequest("read")).Data ??
+            throw new IOException("Service returned an empty state.");
+        Data = JsonSerializer.Deserialize<AppData>(snapshot, JsonOptions) ?? new AppData();
     }
 
-    public static void Save() =>
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(Data, JsonOptions), Encoding.UTF8);
+    static void Write(string operation, JsonObject payload)
+    {
+        AdminPipeClient.Send(new AdminRequest(operation, payload));
+        Reload();
+    }
+
+    public static void AddGroup(AccessGroup group) =>
+        Write("add_group", new JsonObject
+        {
+            ["Group"] = JsonSerializer.SerializeToNode(group, JsonOptions)
+        });
+
+    public static void AddCodes(Guid groupId, IReadOnlyList<AccessCode> codes) =>
+        Write("add_codes", new JsonObject
+        {
+            ["GroupId"] = groupId.ToString(),
+            ["Codes"] = JsonSerializer.SerializeToNode(codes, JsonOptions)
+        });
+
+    public static void SetRestaurantName(string name) =>
+        Write("set_name", new JsonObject { ["Name"] = name });
+
+    public static void StopNetworkTrial()
+    {
+        AdminPipeClient.Send(new AdminRequest("stop_wfp_trial"));
+        Reload();
+    }
+
+    public static void SetNetwork(NetworkPreferences config) =>
+        Write("set_network", new JsonObject
+        {
+            ["Network"] = JsonSerializer.SerializeToNode(config, JsonOptions)
+        });
 
     public static bool HasPassword() =>
         !string.IsNullOrWhiteSpace(Data.PasswordSalt) && !string.IsNullOrWhiteSpace(Data.PasswordHash);
 
     public static void SetPassword(string password)
     {
+        if (password.Length < 12) throw new ArgumentException("Password too short.");
         var salt = RandomNumberGenerator.GetBytes(16);
         var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 220_000, HashAlgorithmName.SHA256, 32);
-        Data.PasswordSalt = Convert.ToBase64String(salt);
-        Data.PasswordHash = Convert.ToBase64String(hash);
-        Save();
+        Write("set_password", new JsonObject
+        {
+            ["Salt"] = Convert.ToBase64String(salt),
+            ["Hash"] = Convert.ToBase64String(hash)
+        });
     }
 
     public static bool VerifyPassword(string password)
@@ -204,9 +252,9 @@ internal sealed class PasswordDialog : Form
     {
         if (_setup)
         {
-            if (_password.Text.Length < 4)
+            if (_password.Text.Length < 12)
             {
-                MessageBox.Show("كلمة المرور يجب ألا تقل عن 4 أحرف.", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("كلمة المرور يجب ألا تقل عن 12 حرفاً.", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             if (_password.Text != _confirm.Text)
@@ -258,7 +306,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Restaurant Wi-Fi Control — V9.1 Native Windows";
+        Text = "Restaurant Wi-Fi Control — V9.3.6 IPV4 PER-DEVICE TRIAL (Windows 10/11)";
         Width = 1450;
         Height = 850;
         MinimumSize = new Size(1150, 680);
@@ -292,10 +340,19 @@ internal sealed class MainForm : Form
         try
         {
             var status = await _http.GetStringAsync("http://127.0.0.1:8765/status/");
-            _gatewayStatus.Text = status.Contains("portal-ready", StringComparison.OrdinalIgnoreCase)
-                ? "Gateway Service: متصل — Portal جاهز"
-                : "Gateway Service: متصل";
-            _gatewayStatus.ForeColor = Color.SeaGreen;
+            using var snapshot = JsonDocument.Parse(status);
+            var trialState = snapshot.RootElement.TryGetProperty("experimentalWfp", out var experimental) &&
+                experimental.TryGetProperty("State", out var stateValue) ? stateValue.GetString() : "off";
+            _gatewayStatus.Text = trialState switch
+            {
+                "ipv4-default-deny-trial-active" => "اختبار WFP: تحقق من حجب IPv4 على الهاتف أولاً",
+                "ipv4-code-trial-active" => "اختبار WFP: أكواد IPv4 متاحة مؤقتًا فقط",
+                "error" or "invalid-network" or "route-mismatch" or "ipv6-risk" =>
+                    "اختبار WFP: فشل فحص الشبكة — راجع التوصيل",
+                _ => "Gateway: البوابة جاهزة — تفعيل الأكواد للإنتاج غير متاح"
+            };
+            _gatewayStatus.ForeColor = trialState is "ipv4-default-deny-trial-active" or
+                "ipv4-code-trial-active" or "off" ? Color.DarkOrange : Color.DarkRed;
             Storage.Reload();
             RefreshAll();
         }
@@ -311,7 +368,7 @@ internal sealed class MainForm : Form
         var sidebar = new Panel { Dock = DockStyle.Right, Width = 235, BackColor = Color.FromArgb(17, 24, 39) };
         var brand = new Label
         {
-            Text = "Wi-Fi Control\nV9.1 Native Windows",
+            Text = "Wi-Fi Control\nV9.3.6 IPv4 Beta",
             Dock = DockStyle.Top,
             Height = 95,
             ForeColor = Color.White,
@@ -387,7 +444,7 @@ internal sealed class MainForm : Form
 
         _metricGroups = Metric(metrics, 0, "المجموعات");
         _metricCodes = Metric(metrics, 1, "الأكواد الفعالة");
-        _metricOnline = Metric(metrics, 2, "المتصلون الآن");
+        _metricOnline = Metric(metrics, 2, "الجلسات المصرح بها");
         _metricClients = Metric(metrics, 3, "المستخدمون");
         page.Controls.Add(metrics);
 
@@ -401,8 +458,10 @@ internal sealed class MainForm : Form
         {
             if (_quickGroup.SelectedItem is not AccessGroup group) return;
             var code = GenerateCode(6);
-            Storage.Data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() });
-            Storage.Save();
+            Storage.AddCodes(group.Id, new[]
+            {
+                new AccessCode { Code = code, GroupId = group.Id, Label = label.Text.Trim() }
+            });
             Clipboard.SetText(code);
             MessageBox.Show($"تم إنشاء الكود ونسخه:\n{code}", "تم");
             label.Clear();
@@ -457,8 +516,11 @@ internal sealed class MainForm : Form
                 MessageBox.Show("اسم المجموعة موجود بالفعل.", "تنبيه");
                 return;
             }
-            Storage.Data.Groups.Add(new AccessGroup { Name = name.Text.Trim(), Minutes = min, QuotaMb = q, DownloadMbps = d, UploadMbps = u, MaxDevices = dev });
-            Storage.Save();
+            Storage.AddGroup(new AccessGroup
+            {
+                Name = name.Text.Trim(), Minutes = min, QuotaMb = q,
+                DownloadMbps = d, UploadMbps = u, MaxDevices = dev
+            });
             name.Clear();
             RefreshAll();
         };
@@ -494,14 +556,17 @@ internal sealed class MainForm : Form
                 return;
             }
             var created = new List<string>();
+            var unique = new HashSet<string>(Storage.Data.Codes.Select(c => c.Code), StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < n; i++)
             {
                 string code;
-                do code = GenerateCode(len); while (Storage.Data.Codes.Any(x => x.Code == code));
-                Storage.Data.Codes.Add(new AccessCode { Code = code, GroupId = group.Id, MaxUses = max });
+                do code = GenerateCode(len); while (!unique.Add(code));
                 created.Add(code);
             }
-            Storage.Save();
+            Storage.AddCodes(group.Id, created.Select(code => new AccessCode
+            {
+                Code = code, GroupId = group.Id, MaxUses = max
+            }).ToArray());
             Clipboard.SetText(string.Join(Environment.NewLine, created));
             MessageBox.Show($"تم إنشاء {created.Count} كود ونسخها للحافظة.", "تم");
             RefreshAll();
@@ -522,7 +587,7 @@ internal sealed class MainForm : Form
         var info = Card(page, DockStyle.Bottom, 55);
         info.Controls.Add(new Label
         {
-            Text = "Gateway Service والبوابة مدمجان في V9.1. الحجب والتحويل التلقائي قيد اختبار طبقة الشبكة على جهاز الـHotspot.",
+            Text = "حالة الجلسة لا تعني التحكم الفعلي بالإنترنت. الحجب والسرعات وتجديد الجلسات قيد تطوير طبقة Windows Gateway.",
             Dock = DockStyle.Fill,
             ForeColor = Color.DarkOrange,
             TextAlign = ContentAlignment.MiddleRight
@@ -544,10 +609,16 @@ internal sealed class MainForm : Form
         row.Controls.Add(save);
         row.Controls.Add(nameBox);
         row.Controls.Add(changePassword);
+        var configureNetwork = PrimaryButton("توصيل الشبكة", 150);
+        row.Controls.Add(configureNetwork);
+        configureNetwork.Click += (_, _) =>
+        {
+            using var dialog = new NetworkSetupDialog(Storage.Data.Network ?? new NetworkPreferences());
+            dialog.ShowDialog(this);
+        };
         save.Click += (_, _) =>
         {
-            Storage.Data.RestaurantName = string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim();
-            Storage.Save();
+            Storage.SetRestaurantName(string.IsNullOrWhiteSpace(nameBox.Text) ? "Restaurant Wi-Fi Control" : nameBox.Text.Trim());
             MessageBox.Show("تم الحفظ.", "تم");
         };
         changePassword.Click += (_, _) =>
@@ -560,9 +631,9 @@ internal sealed class MainForm : Form
                 return;
             }
             var next = PromptPassword("كلمة المرور الجديدة");
-            if (string.IsNullOrWhiteSpace(next) || next.Length < 4)
+            if (string.IsNullOrWhiteSpace(next) || next.Length < 12)
             {
-                MessageBox.Show("كلمة المرور الجديدة قصيرة.", "خطأ");
+                MessageBox.Show("كلمة المرور الجديدة يجب أن تكون 12 حرفاً على الأقل.", "خطأ");
                 return;
             }
             Storage.SetPassword(next);
@@ -626,7 +697,7 @@ internal sealed class MainForm : Form
 
     void RefreshAll()
     {
-        var groups = Storage.Data.Groups.Where(g => g.Enabled && g.Kind != "customer").ToList();
+        var groups = Storage.Data.Groups.Where(g => g.Enabled).ToList();
         if (_quickGroup is not null)
         {
             _quickGroup.DataSource = groups.ToList();
@@ -679,13 +750,16 @@ internal sealed class MainForm : Form
                 MAC = c.Mac,
                 المجموعة = c.Group,
                 الاستهلاك = $"{c.UsedMb:0.0} MB",
-                الحالة = c.Connected ? "متصل" : "غير متصل"
+                الحالة = c.HasAuthorizedSession ? "جلسة مصرح بها" :
+                    c.AdditionalFields.TryGetValue("SessionStatus", out var status) && status.ValueKind == JsonValueKind.String ?
+                        status.GetString() == "pending-network-authorization" ? "بانتظار الشبكة" :
+                        status.GetString() == "revocation-required" ? "يحتاج مراجعة" : "غير متصل" : "غير متصل"
             }).ToList();
         }
 
         if (_metricGroups is not null) _metricGroups.Text = Storage.Data.Groups.Count.ToString();
         if (_metricCodes is not null) _metricCodes.Text = Storage.Data.Codes.Count(c => c.Enabled).ToString();
-        if (_metricOnline is not null) _metricOnline.Text = Storage.Data.Clients.Count(c => c.Connected).ToString();
+        if (_metricOnline is not null) _metricOnline.Text = Storage.Data.Clients.Count(c => c.HasAuthorizedSession).ToString();
         if (_metricClients is not null) _metricClients.Text = Storage.Data.Clients.Count.ToString();
     }
 
