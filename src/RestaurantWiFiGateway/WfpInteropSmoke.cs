@@ -216,7 +216,7 @@ internal static class WfpInteropSmoke
 
             // Invalid reconfiguration must not preserve grants from the previous
             // synthetic topology even if WFP was active immediately before.
-            var restoreEnd = clock.GetUtcNow().AddMinutes(1);
+            var restoreEnd = clock.GetUtcNow().AddSeconds(75);
             admission.Apply(selected, restoreEnd, blockObserved: true);
             var restored = admission.GrantAsync(
                 new RestaurantWiFiNetworking.ClientIdentity(first.ToString()), restoreEnd)
@@ -240,7 +240,7 @@ internal static class WfpInteropSmoke
 
             // A previously active grant must also be invalidated when the
             // operator changes the trial deadline to an already elapsed time.
-            var activeEnd = clock.GetUtcNow().AddMinutes(1);
+            var activeEnd = clock.GetUtcNow().AddSeconds(90);
             admission.Apply(selected, activeEnd, blockObserved: true);
             var beforeExpiry = admission.GrantAsync(
                 new RestaurantWiFiNetworking.ClientIdentity(first.ToString()),
