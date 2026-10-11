@@ -28,8 +28,6 @@ public static class PersistentGuardTopology
             mask.AddressFamily != AddressFamily.InterNetwork)
             return Reject("invalid-ipv4");
         var bytes = downstream.GetAddressBytes();
-        var upstreamBytes = upstream.GetAddressBytes();
-        var maskBytes = mask.GetAddressBytes();
         uint maskValue = Ipv4TrialRulePlanner.ToNetworkUInt32(mask);
         var prefix = 0;
         var zeroSeen = false;
@@ -46,6 +44,11 @@ public static class PersistentGuardTopology
             return Reject("downstream-not-private");
         var addr = Ipv4TrialRulePlanner.ToNetworkUInt32(downstream);
         var wan = Ipv4TrialRulePlanner.ToNetworkUInt32(upstream);
+        var wanOctets = upstream.GetAddressBytes();
+        if (wanOctets[0] is 0 or 127 or >= 224 ||
+            (wanOctets[0] == 169 && wanOctets[1] == 254) ||
+            wan == uint.MaxValue)
+            return Reject("upstream-address-not-routable");
         var network = addr & maskValue;
         if (addr == network || addr == (network | ~maskValue))
             return Reject("downstream-host-invalid");
