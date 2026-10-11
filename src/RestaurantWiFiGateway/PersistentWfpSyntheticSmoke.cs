@@ -25,6 +25,7 @@ internal static class PersistentWfpSyntheticSmoke
 
         var subkey = Guid.NewGuid();
         var filterkey = Guid.NewGuid();
+        var reverseFilterKey = Guid.NewGuid();
         IntPtr engine = IntPtr.Zero;
         try
         {
@@ -65,6 +66,35 @@ internal static class PersistentWfpSyntheticSmoke
             }
             finally { Marshal.FreeHGlobal(ptr); }
 
+            // A customer path must be scoped in BOTH forwarding directions.
+            // Reverse the synthetic interfaces; these never affect real NICs.
+            var reverse = new[]
+            {
+                Condition(SourceIf, outbound),
+                Condition(DestinationIf, inbound)
+            };
+            var reversePtr = Marshal.AllocHGlobal(length * reverse.Length);
+            try
+            {
+                for (var i = 0; i < reverse.Length; i++)
+                    Marshal.StructureToPtr(reverse[i],
+                        IntPtr.Add(reversePtr, i * length), false);
+                WithDisplay("Restaurant WiFi synthetic persistent reverse deny", name =>
+                {
+                    var reverseFilter = new Filter
+                    {
+                        key = reverseFilterKey, display = new Display { name = name },
+                        flags = Persistent, layer = ForwardV4, sublayer = subkey,
+                        weight = new Value { type = 1, value = new Union { byteValue = 1 } },
+                        count = (uint)reverse.Length, conditions = reversePtr,
+                        action = new Action { type = Block }
+                    };
+                    Check(FwpmFilterAdd0(engine, ref reverseFilter, IntPtr.Zero, out _),
+                        "persistent reverse synthetic filter create");
+                });
+            }
+            finally { Marshal.FreeHGlobal(reversePtr); }
+
             Check(FwpmEngineClose0(engine), "engine close before persistence check");
             engine = IntPtr.Zero;
             engine = Open();
@@ -72,7 +102,12 @@ internal static class PersistentWfpSyntheticSmoke
             Check(result, "filter survived closing original WFP engine");
             if (found == IntPtr.Zero) throw new InvalidOperationException("Filter query returned null");
             FwpmFreeMemory0(ref found);
-            Console.WriteLine("PASS: synthetic WFP persistent filter survived engine close/reopen.");
+            Check(FwpmFilterGetByKey0(engine, ref reverseFilterKey, out var reverseFound),
+                "reverse filter survived closing original WFP engine");
+            if (reverseFound == IntPtr.Zero)
+                throw new InvalidOperationException("Reverse filter query returned null");
+            FwpmFreeMemory0(ref reverseFound);
+            Console.WriteLine("PASS: both synthetic IPv4 forwarding directions survived engine close/reopen.");
             Console.WriteLine("NOTE: Synthetic indices do not prove actual packet blocking.");
         }
         finally
@@ -86,10 +121,11 @@ internal static class PersistentWfpSyntheticSmoke
                 try
                 {
                     var filterDelete = FwpmFilterDeleteByKey0(engine, ref filterkey);
+                    var reverseDelete = FwpmFilterDeleteByKey0(engine, ref reverseFilterKey);
                     var subDelete = FwpmSubLayerDeleteByKey0(engine, ref subkey);
-                    if (filterDelete != 0 || subDelete != 0)
+                    if (filterDelete != 0 || reverseDelete != 0 || subDelete != 0)
                         throw new InvalidOperationException(
-                            $"Persistent synthetic cleanup failed: filter=0x{filterDelete:X8}, sublayer=0x{subDelete:X8}");
+                            $"Synthetic cleanup failed: forward=0x{filterDelete:X8}, reverse=0x{reverseDelete:X8}, sublayer=0x{subDelete:X8}");
                     Console.WriteLine("PASS: synthetic persistent objects removed.");
                 }
                 finally { FwpmEngineClose0(engine); }
