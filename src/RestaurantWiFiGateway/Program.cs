@@ -15,6 +15,13 @@ if (args.Length == 1 && args[0] == "--wfp-smoke")
     return;
 }
 
+// Opt-in native WFP persistence smoke: synthetic interface IDs only.
+if (args.Length == 1 && args[0] == "--persistent-wfp-smoke")
+{
+    PersistentWfpSyntheticSmoke.Run();
+    return;
+}
+
 try { GatewayDataSecurity.Protect(); }
 catch (Exception ex)
 {
