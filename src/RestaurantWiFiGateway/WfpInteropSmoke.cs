@@ -148,7 +148,7 @@ internal static class WfpInteropSmoke
             snapshot = System.Text.Json.JsonSerializer.SerializeToElement(admission.Snapshot());
             Assert(!admission.IsEnforcementReady &&
                 snapshot.GetProperty("authorizedClientIps").GetArrayLength() == 0 &&
-                snapshot.GetProperty("installedFilterCount").GetInt32() == 1,
+                snapshot.GetProperty("installedFilterCount").GetInt32() == 2,
                 "Withdrawal of manual deny verification clears all active per-IP permits");
 
             admission.Apply(selected, end, blockObserved: true);
