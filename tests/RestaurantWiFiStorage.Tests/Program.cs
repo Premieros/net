@@ -550,6 +550,23 @@ try
             ["SessionStatus"]!.GetValue<string>() == "revocation-required",
         "Failed WFP revoke remains pending and cannot be reported as disconnected");
 
+    adminStore.Update(root =>
+    {
+        var pending = root["Clients"]!.AsArray().OfType<JsonObject>()
+            .Single(c => c["AccessCode"]!.GetValue<string>() == "123456");
+        pending["Ip"] = "::1";
+        return true;
+    });
+    Check(await new SessionRevocationService(adminStore,
+        new FakeAdmissionController(true)).ReconcileAsync() == 0,
+        "Non-IPv4 source is not considered revoked by IPv4 backend");
+    adminStore.Update(root =>
+    {
+        var pending = root["Clients"]!.AsArray().OfType<JsonObject>()
+            .Single(c => c["AccessCode"]!.GetValue<string>() == "123456");
+        pending["Ip"] = "192.0.2.5";
+        return true;
+    });
     var revocationController = new FakeAdmissionController(true);
     Check(await new SessionRevocationService(adminStore, revocationController).ReconcileAsync() == 1,
         "Confirmed network rule revocation finalizes expired session");
