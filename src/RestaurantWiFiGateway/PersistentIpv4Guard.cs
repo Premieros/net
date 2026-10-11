@@ -106,8 +106,19 @@ internal static class PersistentIpv4Guard
                 // Verify WFP contains both durable filters before declaring
                 // the block installed. This is not a real packet test.
                 if (!Exists(engine, ForwardKey) || !Exists(engine, ReverseKey))
+                {
+                    // Commit has already succeeded. Transaction abort cannot
+                    // undo permanent filters; explicitly remove the policy.
+                    try { Remove(); }
+                    catch (Exception cleanup)
+                    {
+                        throw new InvalidOperationException(
+                            "WFP persisted an incomplete guard, and cleanup failed. " +
+                            "Run --persistent-ipv4-guard remove as administrator.", cleanup);
+                    }
                     throw new InvalidOperationException(
-                        "Persistent guard commit did not return both WFP filters.");
+                        "Incomplete WFP guard was removed after failed verification.");
+                }
             }
             catch
             {
