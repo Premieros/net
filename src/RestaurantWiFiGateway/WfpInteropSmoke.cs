@@ -59,8 +59,8 @@ internal static class WfpInteropSmoke
         var second = IPAddress.Parse("192.168.137.102");
 
         gate.Apply(selected, Array.Empty<IPAddress>());
-        Assert(gate.Active && gate.InstalledFilterCount == 1,
-            "Native default deny WFP filter installed");
+        Assert(gate.Active && gate.InstalledFilterCount == 2,
+            "Both forwarding directions have native default-deny WFP filters installed");
 
         gate.Apply(selected, new[] { first });
         Assert(gate.Active && gate.InstalledFilterCount > 2,
@@ -75,8 +75,8 @@ internal static class WfpInteropSmoke
             "Native revocation of first client updated transaction");
 
         gate.Apply(selected, Array.Empty<IPAddress>());
-        Assert(gate.Active && gate.InstalledFilterCount == 1,
-            "Native reversion to blanket deny after removing both permits");
+        Assert(gate.Active && gate.InstalledFilterCount == 2,
+            "Both directions revert to blanket deny after removing both permits");
 
         // End-to-end trial admission, using the very same native WFP gate
         // and exact interface pair as production, but only synthetic NICs.
