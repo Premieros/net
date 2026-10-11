@@ -238,6 +238,14 @@ internal static class WfpInteropSmoke
                 afterBad.GetProperty("installedFilterCount").GetInt32() == 0,
                 "Missing WAN invalidates prior permits and closes dynamic WFP session");
 
+            // A previously active grant must also be invalidated when the
+            // operator changes the trial deadline to an already elapsed time.
+            var activeEnd = clock.GetUtcNow().AddMinutes(1);
+            admission.Apply(selected, activeEnd, blockObserved: true);
+            var beforeExpiry = admission.GrantAsync(
+                new RestaurantWiFiNetworking.ClientIdentity(first.ToString()),
+                activeEnd).GetAwaiter().GetResult();
+            Assert(beforeExpiry.Enforced, "Precondition: grant exists before expired reconfiguration");
             // Expired trial is rejected explicitly, and no WFP grants remain.
             var expiredRejected = false;
             try
