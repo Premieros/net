@@ -75,7 +75,12 @@ public sealed class AccessRedemptionService
                 var pending = clients?.OfType<JsonObject>().FirstOrDefault(c =>
                     c["ReservationId"]?.GetValue<string>() == reservation.Id &&
                     c["SessionStatus"]?.GetValue<string>() == "pending-network-authorization");
-                if (pending is null) return false;
+                // Native grant may have succeeded just as the trial expired,
+                // or as its WFP policy was invalidated. Never consume a voucher
+                // or report an active session after losing enforcement.
+                if (pending is null || !admission.IsEnforcementReady ||
+                    DateTimeOffset.UtcNow >= reservation.Expires)
+                    return false;
 
                 var code = (root["Codes"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(c =>
                     string.Equals(c["Code"]?.GetValue<string>(), request.Code, StringComparison.OrdinalIgnoreCase));
