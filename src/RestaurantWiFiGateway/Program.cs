@@ -122,7 +122,9 @@ sealed class GatewayWorker : BackgroundService
 
     async Task ExpireSessionsLoop(CancellationToken token)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        // Match the two-second WFP trial refresh: expired vouchers must not
+        // retain an installed source-IP permit for an extra ten seconds.
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
         try
         {
             while (await timer.WaitForNextTickAsync(token))
