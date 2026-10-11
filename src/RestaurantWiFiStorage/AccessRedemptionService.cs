@@ -193,6 +193,27 @@ public sealed class AccessRedemptionService
         if (occupiedDevices >= maximumDevices)
             return new(false, "اكتمل عدد الأجهزة المتزامنة المسموح به لهذا الكود.");
 
+        // This is a per-voucher/per-phone historical use cap. A failed
+        // reservation is excluded; expired completed sessions still count.
+        var maxPerDevice = group["MaxUsesPerDevice"]?.GetValue<int>() ?? 0;
+        if (maxPerDevice < 0)
+            return new(false, "إعداد استخدامات الجهاز غير صالح.");
+        if (maxPerDevice > 0)
+        {
+            var priorUses = clients.OfType<JsonObject>().Count(c =>
+                string.Equals(c["AccessCode"]?.GetValue<string>(), request.Code,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(c["Phone"]?.GetValue<string>(), request.Phone,
+                    StringComparison.OrdinalIgnoreCase) &&
+                (c["Connected"]?.GetValue<bool>() == true ||
+                 c["NetworkRuleInstalled"]?.GetValue<bool>() == true ||
+                 c["SessionStatus"]?.GetValue<string>() is
+                     "expired" or "network-authorized" or
+                     "revocation-required" or "trial-rule-installed-unverified"));
+            if (priorUses >= maxPerDevice)
+                return new(false, "بلغ هذا الهاتف الحد المسموح لاستخدام الكود.");
+        }
+
         var id = Guid.NewGuid().ToString("N");
         var expiry = now.AddMinutes(minutes);
         if (trialUntil.HasValue && trialUntil.Value < expiry) expiry = trialUntil.Value;
