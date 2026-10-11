@@ -367,6 +367,16 @@ try
         root["Clients"]!.AsArray().Remove(pending);
         return true;
     });
+    // The WFP trial can shut down after an API grant but before the
+    // voucher database commit. Never consume the voucher in that race.
+    var vanishingBackend = new VanishingAdmissionController();
+    var vanishing = await new AccessRedemptionService(adminStore, vanishingBackend)
+        .RedeemAsync(requestForCode);
+    Check(!vanishing.Success && vanishingBackend.RevokeAttempts == 1 &&
+        JsonNode.Parse(adminStore.Read())!["Codes"]![0]!["Uses"]!.GetValue<int>() == 0 &&
+        !JsonNode.Parse(adminStore.Read())!["Clients"]!.AsArray().OfType<JsonObject>()
+            .Any(c => c["Phone"]?.GetValue<string>() == "123456789"),
+        "Network becoming unavailable during grant never consumes a voucher");
     var acceptsGrant = new FakeAdmissionController(true);
     var confirmed = await new AccessRedemptionService(adminStore, acceptsGrant).RedeemAsync(requestForCode);
     Check(confirmed.Success && acceptsGrant.GrantCount == 1 &&
@@ -647,5 +657,24 @@ sealed class ThrowingAdmissionController : INetworkAdmissionController
     {
         RevokeAttempts++;
         return ValueTask.FromResult(new AdmissionResult(false, "unknown native revoke"));
+    }
+}
+
+sealed class VanishingAdmissionController : INetworkAdmissionController
+{
+    bool ready = true;
+    public int RevokeAttempts { get; private set; }
+    public bool IsEnforcementReady => ready;
+    public ValueTask<AdmissionResult> GrantAsync(ClientIdentity client,
+        DateTimeOffset expiresAt, CancellationToken token = default)
+    {
+        ready = false;
+        return ValueTask.FromResult(new AdmissionResult(true, "synthetic grant before WFP failure"));
+    }
+    public ValueTask<AdmissionResult> RevokeAsync(ClientIdentity client,
+        CancellationToken token = default)
+    {
+        RevokeAttempts++;
+        return ValueTask.FromResult(new AdmissionResult(true, "cleaned up"));
     }
 }
