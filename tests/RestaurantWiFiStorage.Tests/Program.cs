@@ -387,6 +387,26 @@ try
         codeAfterCap["Uses"]!.GetValue<int>() == 1,
         "Multi-use voucher with MaxDevices=1 cannot grant a second concurrent device");
 
+    // Expiry frees a concurrent device slot, but does not erase the
+    // per-phone historical-use limit on the same voucher.
+    adminStore.Update(root =>
+    {
+        var past = root["Clients"]!.AsArray().OfType<JsonObject>()
+            .Single(c => c["AccessCode"]!.GetValue<string>() == "135791");
+        past["Connected"] = false;
+        past["SessionStatus"] = "expired";
+        return true;
+    });
+    var pastGrantCount = acceptsGrant.GrantCount;
+    var reusedByPhone = await new AccessRedemptionService(adminStore, acceptsGrant)
+        .RedeemAsync(new RedemptionRequest("First Device", "909090901", "135791",
+            "198.51.100.143", "same-phone-new-address"));
+    Check(!reusedByPhone.Success && acceptsGrant.GrantCount == pastGrantCount &&
+        JsonNode.Parse(adminStore.Read())!["Codes"]!.AsArray().OfType<JsonObject>()
+            .Single(x => x["Code"]!.GetValue<string>() == "135791")
+            ["Uses"]!.GetValue<int>() == 1,
+        "Expired voucher use still counts toward per-phone MaxUsesPerDevice");
+
     // A fake time-limited admission controller checks DATABASE semantics:
     // committing a temporary rule MUST NOT claim real phone connectivity.
     var trialCodeNode = new JsonObject
