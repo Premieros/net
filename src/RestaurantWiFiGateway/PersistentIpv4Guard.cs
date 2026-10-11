@@ -19,6 +19,34 @@ internal static class PersistentIpv4Guard
     static Guid ForwardKey => new("9b3920ad-6628-438b-bb91-9f0a8d4b9293");
     static Guid ReverseKey => new("6648f979-9256-4a67-ae42-2310ab2b22f7");
 
+    // Read-only inspection: a persistent deny must never be mistaken for an
+    // experimental grant-capable policy. Incomplete installation is unsafe too.
+    public static bool HasAnyInstalledFilter()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var engine = Open();
+        try
+        {
+            return Exists(engine, ForwardKey) || Exists(engine, ReverseKey);
+        }
+        finally { FwpmEngineClose0(engine); }
+    }
+
+    static bool Exists(IntPtr engine, Guid key)
+    {
+        var result = FwpmFilterGetByKey0(engine, ref key, out var filter);
+        if (result != 0)
+        {
+            // Only the documented not-found result means the filter is absent.
+            if (result == 0x80320003) return false;
+            throw new InvalidOperationException($"WFP filter query failed: 0x{result:X8}");
+        }
+        if (filter == IntPtr.Zero)
+            throw new InvalidOperationException("WFP reported a filter without a body.");
+        FwpmFreeMemory0(ref filter);
+        return true;
+    }
+
     public static void Install(int upstream, int downstream)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
