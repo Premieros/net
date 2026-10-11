@@ -59,6 +59,13 @@ jobs:
           & installer/gateway/RestaurantWiFiGateway.exe --wfp-smoke
           if ($LASTEXITCODE -ne 0) { throw "WFP smoke test failed: exit code $LASTEXITCODE" }
 
+      - name: Smoke-test persistent native WFP filter lifecycle (synthetic adapters only)
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          & installer/gateway/RestaurantWiFiGateway.exe --persistent-wfp-smoke
+          if ($LASTEXITCODE -ne 0) { throw "Persistent synthetic WFP smoke failed: exit code $LASTEXITCODE" }
+
       - name: Smoke-test Windows Gateway admin IPC
         shell: pwsh
         run: ./tests/Smoke-WindowsGateway.ps1
