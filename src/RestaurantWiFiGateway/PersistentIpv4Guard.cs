@@ -25,7 +25,7 @@ internal static class PersistentIpv4Guard
         if (upstream <= 0 || downstream <= 0 || upstream == downstream)
             throw new ArgumentException("Distinct positive interface indices required.");
         // Refuse indexes that do not match the discovered physical adapter pair.
-        var discovered = RestaurantWiFiNetworking.NetworkDiscovery.Discover();
+        var discovered = NetworkDiscovery.Discover();
         var wan = discovered.Wan;
         var ap = discovered.AccessPoints.SingleOrDefault(a => a.InterfaceIndex == downstream);
         if (wan is null || wan.InterfaceIndex != upstream || ap is null)
