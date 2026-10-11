@@ -176,6 +176,23 @@ public sealed class AccessRedemptionService
         if (group is null || minutes <= 0)
             return new(false, "الباقة غير متاحة.");
 
+        // Limit simultaneous devices PER VOUCHER, not per entire package.
+        // Count pending authorization too: reservations occur in one SQLite
+        // transaction, preventing concurrent requests bypassing the cap.
+        var maximumDevices = group["MaxDevices"]?.GetValue<int>() ?? 1;
+        if (maximumDevices <= 0)
+            return new(false, "إعداد عدد الأجهزة للباقة غير صالح.");
+        var occupiedDevices = clients.OfType<JsonObject>().Count(c =>
+            string.Equals(c["AccessCode"]?.GetValue<string>(), request.Code,
+                StringComparison.OrdinalIgnoreCase) &&
+            (c["SessionStatus"]?.GetValue<string>() is "pending-network-authorization"
+                or "revocation-required" or "trial-rule-installed-unverified" ||
+             (c["Connected"]?.GetValue<bool>() == true &&
+              DateTimeOffset.TryParse(c["SessionExpiresAt"]?.GetValue<string>(),
+                  out var activeUntil) && activeUntil > now)));
+        if (occupiedDevices >= maximumDevices)
+            return new(false, "اكتمل عدد الأجهزة المتزامنة المسموح به لهذا الكود.");
+
         var id = Guid.NewGuid().ToString("N");
         var expiry = now.AddMinutes(minutes);
         if (trialUntil.HasValue && trialUntil.Value < expiry) expiry = trialUntil.Value;
