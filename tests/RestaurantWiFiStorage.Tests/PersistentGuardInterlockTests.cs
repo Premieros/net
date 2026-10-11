@@ -58,6 +58,14 @@ internal static class PersistentGuardInterlockTests
             "public downstream scope rejected");
         Check(!PersistentGuardTopology.Validate(selection with { UpstreamAddress = "192.168.137.22" }).SafeToStage,
             "overlapping uplink subnet rejected");
+        foreach (var invalidWan in new[] { "0.0.0.0", "127.0.0.1",
+                     "169.254.20.1", "224.0.0.1", "255.255.255.255" })
+        {
+            Check(PersistentGuardTopology.Validate(selection with
+                { UpstreamAddress = invalidWan }).Reason == "upstream-address-not-routable",
+                "reserved WAN address rejected: " + invalidWan);
+        }
+
         Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "192.168.137.0" }).SafeToStage,
             "downstream network address rejected");
         Check(!PersistentGuardTopology.Validate(selection with { DownstreamAddress = "192.168.137.255" }).SafeToStage,
