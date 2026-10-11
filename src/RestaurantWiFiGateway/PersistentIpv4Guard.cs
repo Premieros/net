@@ -64,9 +64,26 @@ internal static class PersistentIpv4Guard
         if (!safe.SafeToStage)
             throw new InvalidOperationException("Unsafe interface scope: " + safe.Reason);
 
+        // A persistent IPv4-only deny is bypassable while the downstream
+        // offers routable IPv6. Never install it as though it isolated clients.
+        var selectedAdapter = System.Net.NetworkInformation.NetworkInterface
+            .GetAllNetworkInterfaces()
+            .SingleOrDefault(n => n.GetIPProperties().GetIPv4Properties()?.Index == downstream);
+        if (selectedAdapter is null ||
+            selectedAdapter.GetIPProperties().UnicastAddresses.Any(a =>
+                a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
+                !a.Address.IsIPv6LinkLocal && !System.Net.IPAddress.IsLoopback(a.Address)))
+            throw new InvalidOperationException(
+                "Downstream has routable IPv6 or cannot be located. IPv4-only guard cannot protect this network.");
+
         var engine = Open();
         try
         {
+            // Refuse to overwrite an installed policy. A separate remove
+            // command is mandatory to prevent accidental topology rebinding.
+            if (HasAnyInstalledFilter())
+                throw new InvalidOperationException(
+                    "Persistent IPv4 guard already exists; remove explicitly before changing adapters.");
             Check(FwpmTransactionBegin0(engine, 0), "persistent guard transaction begin");
             try
             {
@@ -86,6 +103,11 @@ internal static class PersistentIpv4Guard
                 AddBlock(engine, ReverseKey, subkey, upstream, downstream,
                     "Restaurant WiFi IPv4 internet to client block");
                 Check(FwpmTransactionCommit0(engine), "persistent guard commit");
+                // Verify WFP contains both durable filters before declaring
+                // the block installed. This is not a real packet test.
+                if (!Exists(engine, ForwardKey) || !Exists(engine, ReverseKey))
+                    throw new InvalidOperationException(
+                        "Persistent guard commit did not return both WFP filters.");
             }
             catch
             {
