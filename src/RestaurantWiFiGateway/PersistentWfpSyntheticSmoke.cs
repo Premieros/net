@@ -110,7 +110,7 @@ internal static class PersistentWfpSyntheticSmoke
             $"{operation} failed: 0x{rc:X8}");
     }
 
-    static void WithDisplay(string display, Action<IntPtr> body)
+    static void WithDisplay(string display, System.Action<IntPtr> body)
     {
         var ptr = Marshal.StringToHGlobalUni(display);
         try { body(ptr); }
