@@ -163,6 +163,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
     static readonly Guid ConditionSourceInterfaceIndex = new("2311334d-c92d-45bf-9496-edf447820e2d");
     static readonly Guid ConditionDestinationInterfaceIndex = new("35cf6522-4139-45ee-a0d5-67b80949d879");
     static readonly Guid ConditionIpSourceAddress = new("ae96897e-2e94-4bc9-b313-b27ee80e574d");
+    static readonly Guid ConditionIpDestinationAddress = new("2d79133b-b390-45c6-8699-acaceaafed33");
 
     const uint RpcCAuthnWinnt = 10;
     const uint FwpmSessionFlagDynamic = 0x00000001;
@@ -241,6 +242,40 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
                 {
                     foreach (var prefix in denyPrefixes)
                         newIds.Add(AddPrefixDenyFilter(ap.InterfaceIndex, wan.InterfaceIndex, prefix));
+                }
+
+                // Enforce the returning WAN -> AP path as well.
+                // For NAT-forwarded replies, the destination is the client IP
+                // at this WFP layer. The deny set excludes authorized clients.
+                if (allowedOnThisInterface.Length == 0)
+                {
+                    newIds.Add(AddFilter(
+                        $"Restaurant WiFi reverse default deny {wan.InterfaceIndex}->{ap.InterfaceIndex}",
+                        FwpActionBlock, weightClass: 1,
+                        new[]
+                        {
+                            Condition(ConditionSourceInterfaceIndex, FwpMatchType.Equal, unchecked((uint)wan.InterfaceIndex)),
+                            Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)ap.InterfaceIndex))
+                        }));
+                }
+                else
+                {
+                    foreach (var prefix in denyPrefixes)
+                        newIds.Add(AddPrefixDenyFilter(wan.InterfaceIndex, ap.InterfaceIndex, prefix,
+                            destinationAddress: true));
+                }
+
+                foreach (var ip in allowedOnThisInterface)
+                {
+                    newIds.Add(AddFilter(
+                        $"Restaurant WiFi reverse permit {ip} {wan.InterfaceIndex}->{ap.InterfaceIndex}",
+                        FwpActionPermit, weightClass: 15,
+                        new[]
+                        {
+                            Condition(ConditionSourceInterfaceIndex, FwpMatchType.Equal, unchecked((uint)wan.InterfaceIndex)),
+                            Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)ap.InterfaceIndex)),
+                            Condition(ConditionIpDestinationAddress, FwpMatchType.Equal, Ipv4ToWfpUInt32(ip))
+                        }));
                 }
 
                 foreach (var ip in allowedOnThisInterface)
@@ -341,7 +376,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
     // unmanaged FWP_V4_ADDR_AND_MASK structure. fwpmclnt copies that value
     // synchronously during FwpmFilterAdd0. Keep it alive until that call ends.
     ulong AddPrefixDenyFilter(int inbound, int outbound,
-        Ipv4TrialRulePlanner.Ipv4Prefix prefix)
+        Ipv4TrialRulePlanner.Ipv4Prefix prefix, bool destinationAddress = false)
     {
         var maskValue = Marshal.AllocHGlobal(Marshal.SizeOf<FwpV4AddrAndMask>());
         try
@@ -361,7 +396,7 @@ internal sealed class ExperimentalWfpForwardGate : IDisposable
                     Condition(ConditionDestinationInterfaceIndex, FwpMatchType.Equal, unchecked((uint)outbound)),
                     new FwpmFilterCondition0
                     {
-                        fieldKey = ConditionIpSourceAddress,
+                        fieldKey = destinationAddress ? ConditionIpDestinationAddress : ConditionIpSourceAddress,
                         matchType = FwpMatchType.Equal,
                         conditionValue = new FwpConditionValue0
                         {
